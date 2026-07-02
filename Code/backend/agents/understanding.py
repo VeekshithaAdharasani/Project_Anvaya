@@ -1,55 +1,84 @@
-import logging
-from typing import Optional
-from pydantic import BaseModel, Field
+"""
+Agent module responsible for parse-extraction inside the Understanding Layer.
+Analyzes conversations to propose structured additions or modifications
+to the passive Understanding Graph.
+"""
 
-from ..services.gemini_service import GeminiService
+import json
+import logging
+import time
+from pathlib import Path
+from typing import Optional
+
+from pydantic import BaseModel, Field, ConfigDict
+
+from services.gemini_service import GeminiService, GeminiConfigurationError
+from models.enums.node_type import NodeType
+from models.enums.relationship_type import RelationshipType
 
 logger = logging.getLogger(__name__)
 
 
 class ProposedNode(BaseModel):
+    """Pydantic representation of an extracted node proposal."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
     id: Optional[str] = Field(
         None,
         description="The ID of the node if it already exists in the graph and is being updated. Otherwise, omit this field to create a new node.",
     )
-    node_type: str = Field(
+
+    node_type: NodeType = Field(
         ...,
-        description="The category of the concept. Must be one of: 'dream', 'goal', 'skill', 'interest', 'motivation', 'value', 'learning_style', 'confidence'.",
+        alias="type",
+        description="The category of the concept.",
     )
+
     name: str = Field(
         ...,
         description="A concise, capitalized name for the concept (e.g., 'Python Programming', 'Become an AI Engineer').",
     )
+
     description: str = Field(
         ...,
         description="A clear, detailed description explaining this concept in relation to the user.",
     )
+
     evidence_quote: str = Field(
         ...,
         description="The exact verbatim quote from the user's latest message or recent history that justifies this node.",
     )
 
-
 class ProposedRelationship(BaseModel):
+    """Pydantic representation of an extracted relationship proposal."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
     source_node_id: str = Field(
         ...,
+        alias="source_id",
         description="The ID of the source node. Can be an existing node ID or the name/temporary ID of a newly proposed node.",
     )
+
     target_node_id: str = Field(
         ...,
+        alias="target_id",
         description="The ID of the target node. Can be an existing node ID or the name/temporary ID of a newly proposed node.",
     )
-    relationship_type: str = Field(
+
+    relationship_type: RelationshipType = Field(
         ...,
-        description="The type of link. Must be one of: 'motivates', 'requires', 'supports', 'influences', 'strengthens'.",
+        alias="type",
+        description="The type of directed link connecting source to target.",
     )
+
     evidence_quote: str = Field(
         ...,
         description="The exact verbatim quote from the user's latest message or recent history that justifies this relationship.",
     )
-
-
-class UnderstandingExtraction(BaseModel):
+class UnderstandingProposal(BaseModel):
+    """Structured extraction proposal representing parsed concepts and connections."""
     proposed_nodes: list[ProposedNode] = Field(
         default_factory=list,
         description="List of new or updated nodes extracted from the conversation.",
@@ -58,16 +87,47 @@ class UnderstandingExtraction(BaseModel):
         default_factory=list,
         description="List of new or updated relationships extracted from the conversation.",
     )
+    reasoning: str = Field(
+        ...,
+        description="Detailed explanation of why these nodes and relationships were proposed.",
+    )
+    confidence: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Confidence score between 0.0 and 1.0.",
+    )
+    uncertainties: list[str] = Field(
+        default_factory=list,
+        description="Uncertain or ambiguous concepts extracted that require clarification.",
+    )
+    contradictions: list[str] = Field(
+        default_factory=list,
+        description="Detected gaps or contradictions between the user's statements and current graph data.",
+    )
+
+
+# --- Custom Exception Classes ---
+
+class UnderstandingAgentError(Exception):
+    """Base domain exception for the Understanding Agent."""
+    pass
+
+
+class ExtractionError(UnderstandingAgentError):
+    """Raised when the structured analysis or JSON schema decoding fails."""
+    pass
 
 
 class UnderstandingAgent:
-    """The interpreter of the Understanding Layer.
-
-    Analyzes conversations and extracts structured understanding (nodes and
-    relationships) using the Gemini API.
+    """
+    The interpreter of the Understanding Layer.
+    Analyzes conversations and extracts structured understanding proposals
+    using the Gemini API without mutating the underlying graph directly.
     """
 
-    SYSTEM_INSTRUCTION = """You are the core parser for the Understanding Layer of Project ANVAYA.
+    # Embedded system prompt representing the core configuration and instructions
+    DEFAULT_SYSTEM_INSTRUCTION: str = """You are the core parser for the Understanding Layer of Project ANVAYA.
 Your task is to analyze the user's latest message, recent conversation history, and the current state of their Understanding Graph. You must extract any new or evolving aspects of the user's personal growth, goals, and skills.
 
 ### Core Concepts to Extract (Node Types)
@@ -92,50 +152,219 @@ Your task is to analyze the user's latest message, recent conversation history, 
 2. **De-duplication**: Look at the current graph state. If a concept already exists (even if named slightly differently), do NOT propose a new node. Instead, propose an update by providing its existing `id`.
 3. **Naming**: Keep names concise, capitalized, and noun-focused (e.g., use 'Machine Learning' instead of 'I like machine learning').
 4. **Context**: Use the description field to explain the context of why this node or relationship is relevant to the user.
-5. **No Hallucinations**: Only extract information explicitly mentioned or strongly implied by the text. If the user doesn't mention any new concepts, return empty lists.
+5. **No Hallucinations**: Only extract information explicitly mentioned or strongly implied by the text.
+
+### Strict Guardrails
+- **Never invent values**: You must never extract or project a value that is not explicitly stated.
+- **Return empty arrays if unsure**: Do not guess or hallucinate. If you are uncertain about a concept or relationship, do not extract it.
+- **Never create duplicate concepts**: If a concept already exists in the graph, reference it by its current ID. Never create redundant nodes.
+- **Never infer personality**: Do not make personality or psychological profile assumptions.
+- **Never infer emotions**: Do not infer emotional states, feelings, or temporary sentiments.
+- **Never infer values unless explicitly stated**: Do not assume any core beliefs, morals, or guiding principles unless the user explicitly defines them.
 """
 
-    def __init__(self, gemini_service: GeminiService):
-        self.gemini_service = gemini_service
+    def __init__(
+        self,
+        gemini_service: GeminiService,
+        prompt_path:str | None = None,
+    ) -> None:
+        """
+        Initializes the agent, loading prompt instructions from the specified path.
+        """
+        self.gemini_service: GeminiService = gemini_service
 
-    def analyze_conversation(
+        if prompt_path:
+            self.prompt_path: Path = Path(prompt_path)
+        else:
+            self.prompt_path = Path(__file__).parent.parent / "prompts" / "understanding_system_prompt.txt"
+
+        self.system_instruction: str = self._load_system_prompt()
+
+    def _load_system_prompt(self) -> str:
+        """
+        Loads the system instruction prompt from disk.
+        Falls back to an embedded representation if the file is missing or unreadable.
+        """
+        if self.prompt_path.exists():
+            try:
+                return self.prompt_path.read_text(encoding="utf-8")
+            except OSError as e:
+                logger.warning(
+                    f"Configuration Warning: Could not read prompt file at '{self.prompt_path}': {e}. "
+                    "Falling back to built-in prompt configuration."
+                )
+        return self.DEFAULT_SYSTEM_INSTRUCTION
+
+    def _validate_inputs(
+        self,
+        session_id: str,
+        user_message: str,
+        history: list[dict[str, str]],
+        current_graph_json: str,
+    ) -> None:
+        """
+        Enforces strict structural type and schema constraints on incoming parameters.
+
+        Raises:
+            ValueError: If any validation checks fail.
+        """
+        if not isinstance(session_id, str) or not session_id.strip():
+            raise ValueError("Validation Error: 'session_id' must be a non-empty string.")
+
+        if not isinstance(user_message, str) or not user_message.strip():
+            raise ValueError("Validation Error: 'user_message' must be a non-empty string.")
+
+        if not isinstance(history, list):
+            raise ValueError("Validation Error: 'history' must be a list of message objects.")
+
+        for idx, msg in enumerate(history):
+            if not isinstance(msg, dict):
+                raise ValueError(f"Validation Error: Message at index {idx} is not a dictionary.")
+            if "role" not in msg or "content" not in msg:
+                raise ValueError(
+                    f"Validation Error: Message at index {idx} is missing 'role' or 'content' fields."
+                )
+            if not msg["role"] or not msg["content"]:
+                raise ValueError(
+                    f"Validation Error: Message at index {idx} contains empty or invalid payload fields."
+                )
+
+        if not isinstance(current_graph_json, str) or not current_graph_json.strip():
+            raise ValueError("Validation Error: 'current_graph_json' must be a non-empty string.")
+
+        try:
+            json.loads(current_graph_json)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"Validation Error: 'current_graph_json' is not valid JSON. Parse Exception: {e}"
+            )
+
+    def _build_prompt(
         self,
         user_message: str,
         history: list[dict[str, str]],
         current_graph_json: str,
-    ) -> UnderstandingExtraction:
-        """Analyzes the latest user message and history against the current graph
+    ) -> str:
+        history_str = "\n".join(
+            f"{'User' if msg['role']=='user' else 'Assistant'}: {msg['content']}"
+            for msg in history
+        )
+        
+        return f"""
+### Current Understanding Graph
 
-        to extract proposed nodes and relationships.
-        """
-        # Format history for the prompt
-        history_str = ""
-        for msg in history:
-            role = "User" if msg["role"] == "user" else "Assistant"
-            history_str += f"{role}: {msg['content']}\n"
-
-        prompt = f"""### Current Understanding Graph (JSON State)
 {current_graph_json}
 
-### Conversation History (Recent)
+### Recent Conversation
+
 {history_str}
-User's Latest Message: {user_message}
+
+### Latest User Message
+
+{user_message}
 
 ### Instructions
-Analyze the latest message and history. Extract any new or updated nodes and relationships. Conform strictly to the JSON schema.
+
+Return ONLY valid JSON.
+
+The JSON MUST exactly match this structure:
+
+{{
+  "proposed_nodes": [
+    {{
+      "id": null,
+      "type": "dream",
+      "name": "...",
+      "description": "...",
+      "evidence_quote": "..."
+    }}
+  ],
+  "proposed_relationships": [
+    {{
+      "source_id": "...",
+      "target_id": "...",
+      "type": "supports",
+      "evidence_quote": "..."
+    }}
+  ],
+  "reasoning": "",
+  "confidence": 0.0,
+  "uncertainties": [],
+  "contradictions": []
+}}
+
+IMPORTANT:
+
+Every relationship MUST contain:
+- source_id
+- target_id
+- type
+- evidence_quote
+
+Never return relationship objects containing only:
+- id
+- type
+
+Never omit source_id or target_id.
+
+Return only JSON.
+No markdown.
+No explanation.
 """
-        logger.info("Sending conversation analysis request to Gemini...")
+
+    def analyze_conversation(
+        self,
+        session_id: str,
+        user_message: str,
+        history: list[dict[str, str]],
+        current_graph_json: str,
+    ) -> UnderstandingProposal:
+        """
+        Analyzes the conversation state and proposes graph updates. 
+        This is a read-only analysis operation; it does not modify the graph.
+
+        Raises:
+            ValueError: If inputs fail constraints.
+            ExtractionError: If structured generation fails.
+
+        Time Complexity: Variable (API dependent)
+        Space Complexity: O(N) where N represents JSON payload size.
+        """
+        start_time = time.perf_counter()
+
+        # Enforce validation boundary checks
+        self._validate_inputs(session_id, user_message, history, current_graph_json)
+
+        prompt = self._build_prompt(user_message, history, current_graph_json)
+        history=history[-20:]
+        prompt_size = len(prompt)
+
+        logger.info(
+            f"Parsing session '{session_id}' conversation state "
+            f"(Prompt Payload: {prompt_size} chars)..."
+        )
+
         try:
-            extraction = self.gemini_service.generate_json(
+            proposal = self.gemini_service.generate_json(
                 prompt=prompt,
-                response_schema=UnderstandingExtraction,
-                system_instruction=self.SYSTEM_INSTRUCTION,
-                temperature=0.1,  # Low temperature for precise extraction
+                response_schema=UnderstandingProposal,
+                system_instruction=self.system_instruction,
+                temperature=0.1,  # Keep low temperature for determinism and high precision
             )
+
+            latency = time.perf_counter() - start_time
+            node_cnt = len(proposal.proposed_nodes)
+            rel_cnt = len(proposal.proposed_relationships)
+
             logger.info(
-                f"Successfully extracted {len(extraction.proposed_nodes)} nodes and {len(extraction.proposed_relationships)} relationships."
+                "Session=%s History=%d Prompt=%d chars Graph=%d chars",
+                session_id,
+                len(history),
+                prompt_size,
+                len(current_graph_json),
             )
-            return extraction
-        except Exception as e:
-            logger.error(f"Failed to analyze conversation: {e}")
+
+            return proposal
+
+        except Exception:
             raise

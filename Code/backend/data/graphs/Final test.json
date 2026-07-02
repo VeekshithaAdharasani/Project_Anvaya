@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "ee02312a-99fe-4892-8dd8-813b7b80d23e",
+      "node_type": "skill",
+      "name": "Python",
+      "description": "The user explicitly states they love Python, indicating it as a skill they possess or are proficient in.",
+      "confidence": 0.95,
+      "evidence": [
+        {
+          "quote": "I love Python",
+          "source": "Final test",
+          "timestamp": "2026-07-02T06:04:47.947497+00:00"
+        }
+      ],
+      "created_at": "2026-07-02T06:04:47.947497+00:00",
+      "updated_at": "2026-07-02T06:04:47.947497+00:00",
+      "validation_status": "inferred"
+    }
+  ],
+  "relationships": []
+}

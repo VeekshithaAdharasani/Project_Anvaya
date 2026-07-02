@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "90ad3c2f-b6a4-46ad-a1ec-cd76746c7536",
+      "node_type": "skill",
+      "name": "Python",
+      "description": "The user explicitly states their enjoyment and proficiency with Python.",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "quote": "I love Python",
+          "source": "Duplicate Test",
+          "timestamp": "2026-07-01T09:57:29.143534+00:00"
+        }
+      ],
+      "created_at": "2026-07-01T09:57:29.142561+00:00",
+      "updated_at": "2026-07-01T09:57:29.143534+00:00",
+      "validation_status": "inferred"
+    },
+    {
+      "id": "63a6f57f-a673-44b4-822c-3fbdfa0aaac9",
+      "node_type": "interest",
+      "name": "Deep Learning",
+      "description": "The user explicitly states their love for Deep Learning.",
+      "confidence": 1.0,
+      "evidence": [
+        {
+          "quote": "I love Deep Learning",
+          "source": "Duplicate Test",
+          "timestamp": "2026-07-01T11:19:59.821907+00:00"
+        }
+      ],
+      "created_at": "2026-07-01T11:19:59.821907+00:00",
+      "updated_at": "2026-07-01T11:19:59.821907+00:00",
+      "validation_status": "inferred"
+    }
+  ],
+  "relationships": [
+    {
+      "id": "90f092f8-d1fe-42dc-97ca-40961874f50c",
+      "source_id": "90ad3c2f-b6a4-46ad-a1ec-cd76746c7536",
+      "target_id": "63a6f57f-a673-44b4-822c-3fbdfa0aaac9",
+      "relationship_type": "supports",
+      "confidence": 0.95,
+      "evidence": [
+        {
+          "quote": "I love Deep Learning",
+          "source": "Duplicate Test",
+          "timestamp": "2026-07-01T11:19:59.821907+00:00"
+        }
+      ],
+      "created_at": "2026-07-01T11:19:59.821907+00:00",
+      "updated_at": "2026-07-01T11:19:59.821907+00:00"
+    }
+  ]
+}

@@ -2,11 +2,11 @@ from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, Any
 
-from ..models.node import Node
-from ..models.relationship import Relationship
-from ..models.enums.node_type import NodeType
-from ..models.enums.relationship_type import RelationshipType
-from ..models.enums.validation_status import ValidationStatus
+from models.node import Node
+from models.relationship import Relationship
+from models.enums.node_type import NodeType
+from models.enums.relationship_type import RelationshipType
+from models.enums.validation_status import ValidationStatus
 
 router = APIRouter(prefix="/api")
 

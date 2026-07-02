@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 import google.generativeai as genai
 from google.generativeai.types import GenerationConfig
-from google.api_core.exceptions import GoogleAPICallError, APIError
+from google.api_core.exceptions import GoogleAPICallError
 
 # Load environmental variables from local .env file immediately on import
 load_dotenv()
@@ -43,23 +43,32 @@ class GeminiService:
     MAX_RETRIES: int = 3
     DEFAULT_TIMEOUT: float = 30.0
 
-    def __init__(self, model_name: str = "gemini-1.5-flash") -> None:
+    def __init__(
+            self,
+            text_model: str = "gemini-2.5-flash",
+            json_model: str = "gemini-2.5-flash-lite",
+    ) -> None:
         """
         Initializes the GeminiService, checking for environment keys and setting up cache.
         """
         self.api_key: Optional[str] = os.environ.get("GEMINI_API_KEY")
+        print("API KEY PREFIX:", self.api_key[:12] if self.api_key else "No Key")
         if not self.api_key:
             logger.warning(
                 "GEMINI_API_KEY environment variable is not set. API calls will fail on invocation."
             )
 
         genai.configure(api_key=self.api_key)
-        self.model_name: str = model_name
+        print("=" * 80)
+        print("API KEY BEING USED:")
+        print(os.getenv("GEMINI_API_KEY")[:15] + "...")
+        print("=" * 80)
+        self.text_model = text_model
+        self.json_model = json_model
 
         # Thread-safe caching mechanism for GenerativeModel instances
         self._model_cache: Dict[Tuple[str, Optional[str]], genai.GenerativeModel] = {}
         self._cache_lock = threading.Lock()
-
     def _get_masked_api_key(self) -> str:
         """
         Safely formats the API key for logs to avoid accidental secret exposure.
@@ -70,7 +79,10 @@ class GeminiService:
             return "INVALID_KEY_LENGTH"
         return f"{self.api_key[:4]}...{self.api_key[-4:]}"
 
-    def _get_model(self, system_instruction: str | None = None) -> genai.GenerativeModel:
+    def _get_model(
+            self,
+            model_name: str,
+            system_instruction: str | None = None,) -> genai.GenerativeModel:
         """
         Retrieves a cached GenerativeModel instance or creates a new one thread-safely.
         """
@@ -79,7 +91,7 @@ class GeminiService:
                 "GEMINI_API_KEY environment variable is not set. Please set the variable."
             )
 
-        cache_key = (self.model_name, system_instruction)
+        cache_key = (model_name, system_instruction)
         
         # Guard lookup/assignment to ensure thread safety under concurrent ASGI requests
         with self._cache_lock:
@@ -87,7 +99,7 @@ class GeminiService:
                 return self._model_cache[cache_key]
 
             model = genai.GenerativeModel(
-                model_name=self.model_name,
+                model_name=model_name,
                 system_instruction=system_instruction,
             )
             self._model_cache[cache_key] = model
@@ -104,7 +116,7 @@ class GeminiService:
         for attempt in range(self.MAX_RETRIES + 1):
             try:
                 return api_call()
-            except (GoogleAPICallError, APIError) as e:
+            except GoogleAPICallError as e:
                 # Resolve the status code representing the error
                 status_code = getattr(e, "code", None)
                 is_transient = status_code in (429, 500, 503, 504)
@@ -147,7 +159,10 @@ class GeminiService:
         Time Complexity: Variable (network bound)
         Space Complexity: O(1)
         """
-        model = self._get_model(system_instruction)
+        model = self._get_model(
+            self.text_model,
+            system_instruction,
+        )
 
         config = GenerationConfig(
             temperature=temperature,
@@ -164,7 +179,7 @@ class GeminiService:
                 generation_config=config,
                 request_options=request_options,
             )
-
+        logger.info("=== GEMINI TEXT CALL ===")
         response = self._execute_with_retry(make_call)
 
         # Validate response candidates to detect safety blocks before accessing response.text
@@ -208,7 +223,10 @@ class GeminiService:
         Time Complexity: Variable (network bound)
         Space Complexity: O(V_schema) representation.
         """
-        model = self._get_model(system_instruction)
+        model = self._get_model(
+            self.json_model,
+            system_instruction,
+        )
 
         config = GenerationConfig(
             temperature=temperature,
@@ -216,7 +234,6 @@ class GeminiService:
             top_k=top_k,
             max_output_tokens=max_output_tokens,
             response_mime_type="application/json",
-            response_schema=response_schema,
         )
 
         request_options = {"timeout": timeout}
@@ -227,7 +244,7 @@ class GeminiService:
                 generation_config=config,
                 request_options=request_options,
             )
-
+        logger.info("=== GEMINI JSON CALL ===")
         response = self._execute_with_retry(make_call)
 
         if not response or not hasattr(response, "candidates") or not response.candidates:
@@ -247,8 +264,35 @@ class GeminiService:
         if not text or not text.strip():
             raise ValueError("Gemini API JSON response text is empty or blank.")
 
-        # Structural serialization directly from the resulting raw payload
-        return response_schema.model_validate_json(text)
+        print("\nRAW GEMINI JSON:\n")
+        print(text)
+        print("\nEND RAW JSON\n")
+        import traceback
+        import json
+        try:
+            # Parse Gemini JSON into a Python dict
+            response_json = json.loads(text)
+            print("\nPARSED JSON:\n")
+            print(response_json)
+            # Remove invalid relationships
+            if "proposed_relationships" in response_json:
+                response_json["proposed_relationships"] = [
+                    r
+                    for r in response_json["proposed_relationships"]
+                    if r.get("source_id") and r.get("target_id")
+                ]
+
+            # Validate cleaned JSON
+            obj = response_schema.model_validate(response_json)
+            print("\nVALIDATED OBJECT:\n")
+            print(obj)
+            print("\nRAW JSON FROM GEMINI:\n")
+            print(text)
+            return obj
+        except Exception:
+            print("\nVALIDATION FAILED:\n")
+            traceback.print_exc()
+            raise
 
     def health_check(self) -> bool:
         """

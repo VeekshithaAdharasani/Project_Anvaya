@@ -3,10 +3,10 @@ from datetime import datetime, timezone
 import uuid
 from typing import Any
 
-from .enums.node_type import NodeType
-from .enums.validation_status import ValidationStatus
-from .evidence import Evidence
-from .utils import parse_datetime
+from models.enums.node_type import NodeType
+from models.enums.validation_status import ValidationStatus
+from models.evidence import Evidence
+from models.utils import parse_datetime
 
 
 @dataclass

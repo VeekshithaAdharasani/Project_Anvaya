@@ -2,7 +2,7 @@ import logging
 from typing import Optional
 from pydantic import BaseModel, Field
 
-from ..services.gemini_service import GeminiService
+from services.gemini_service import GeminiService
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,35 @@ Your task is to review the user's current Understanding Graph and identify gaps,
 2. **One at a Time**: Although you can suggest multiple questions in the JSON output, each individual question should focus on a single clear gap. The Coordinator will select the best one.
 3. **Non-Intrusive**: Do not pry or ask overly sensitive personal questions. Focus on their growth, learning, goals, and dreams.
 4. **No Gaps?**: If the graph is well-connected and all confidence scores are high, you do not need to suggest any questions (return an empty list).
+
+### Output Format
+
+Return ONLY valid JSON.
+
+The JSON MUST exactly match this structure:
+
+{{
+  "suggested_questions": [
+    {{
+      "target_node_id": null,
+      "target_relationship_type": null,
+      "reasoning": "",
+      "question_text": ""
+    }}
+  ]
+}}
+
+Do NOT return a JSON array.
+
+Do NOT use keys like:
+- question
+- priority
+
+Always return the root object with the key:
+
+suggested_questions
+
+Return only JSON.
 """
 
     def __init__(self, gemini_service: GeminiService):
@@ -78,10 +107,29 @@ Your task is to review the user's current Understanding Graph and identify gaps,
 {history_str}
 
 ### Instructions
-Scan the graph for low-confidence nodes, isolated concepts, or missing relationships. Formulate conversational questions to help fill in these gaps.
-"""
+
+Scan the graph for missing motivations, isolated nodes, low-confidence concepts, and missing relationships.
+
+Return ONLY valid JSON.
+
+The root JSON object MUST contain exactly one field:
+
+{{
+  "suggested_questions": []
+}}
+
+Each question must contain:
+
+- target_node_id
+- target_relationship_type
+- reasoning
+- question_text
+
+Do not return a list as the root object.
+Do not use markdown."""
         logger.info("Analyzing graph for curiosity gaps...")
         try:
+            logger.info(prompt)
             analysis = self.gemini_service.generate_json(
                 prompt=prompt,
                 response_schema=CuriosityAnalysis,

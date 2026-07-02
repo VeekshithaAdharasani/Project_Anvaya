@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from typing import Dict, List
 
-from ..models.understanding_graph import UnderstandingGraph
+from models.understanding_graph import UnderstandingGraph
 
 logger = logging.getLogger(__name__)
 

@@ -3,9 +3,9 @@ from datetime import datetime, timezone
 import uuid
 from typing import Any
 
-from .enums.relationship_type import RelationshipType
-from .evidence import Evidence
-from .utils import parse_datetime
+from models.enums.relationship_type import RelationshipType
+from models.evidence import Evidence
+from models.utils import parse_datetime
 
 
 @dataclass

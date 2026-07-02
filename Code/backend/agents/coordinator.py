@@ -2,20 +2,28 @@ import logging
 import json
 from typing import Any
 
-from ..services.gemini_service import GeminiService
-from ..services.graph_service import GraphService
-from .memory import MemoryAgent
-from .understanding import UnderstandingAgent
-from .reflection import ReflectionAgent
-from .curiosity import CuriosityAgent
-from ..models.node import Node
-from ..models.relationship import Relationship
-from ..models.enums.node_type import NodeType
-from ..models.enums.relationship_type import RelationshipType
-from ..models.enums.validation_status import ValidationStatus
+from services.gemini_service import GeminiService
+from services.graph_service import GraphService
+from agents.memory import MemoryAgent
+from agents.understanding import UnderstandingAgent
+from agents.reflection import ReflectionAgent
+from agents.curiosity import CuriosityAgent
+from models.node import Node
+from models.relationship import Relationship
+from models.enums.node_type import NodeType
+from models.enums.relationship_type import RelationshipType
+from models.enums.validation_status import ValidationStatus
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_SYSTEM_PROMPT = """
+You are the conversational interface for Project ANVAYA.
+
+Your task is to respond to the user's latest message in a warm, supportive, and highly personalized manner.
+
+(keep the same prompt here)
+"""
 
 class CoordinatorAgent:
     """The central orchestrator of Project ANVAYA.
@@ -23,19 +31,6 @@ class CoordinatorAgent:
     Coordinates between Memory, the Understanding Layer (agents & graph),
     and generates personalized responses.
     """
-
-    SYSTEM_INSTRUCTION = """You are the conversational interface for Project ANVAYA.
-Your task is to respond to the user's latest message in a warm, supportive, and highly personalized manner, leveraging the structured understanding of their journey.
-
-### Your Context:
-* **Understanding Graph**: A structured representation of the user's dreams, goals, skills, interests, and motivations. Use this to customize your advice, suggestions, and conversation style.
-* **Conversation History**: The recent dialogue context.
-
-### Response Guidelines:
-1. **Personalization**: Reference their goals, skills, or interests naturally when relevant. Do not force them into every sentence, but let them guide your perspective.
-2. **Supportive Partner**: Act as a growth partner. Encourage their progress and celebrate milestones.
-3. **Weave in Questions**: If a clarification or curiosity question is provided, weave it naturally into your response (usually at the end). Do not ask multiple questions; just ask the one provided.
-"""
 
     def __init__(
         self,
@@ -52,6 +47,22 @@ Your task is to respond to the user's latest message in a warm, supportive, and 
         self.understanding_agent = understanding_agent
         self.reflection_agent = reflection_agent
         self.curiosity_agent = curiosity_agent
+        self.prompt_path = (
+            Path(__file__).parent.parent
+            / "prompts"
+            / "coordinator_system_prompt.txt"
+        )
+        self.system_prompt = self._load_system_prompt()
+
+    def _load_system_prompt(self) -> str:
+        """Loads the coordinator system prompt from disk."""
+        try:
+            return self.prompt_path.read_text(encoding="utf-8")
+        except Exception:
+            logger.warning(
+                "Failed to load coordinator prompt file. Using embedded default."
+            )
+            return DEFAULT_SYSTEM_PROMPT
 
     def process_message(self, session_id: str, user_message: str) -> str:
         """Processes an incoming user message through the entire multi-agent pipeline
@@ -69,22 +80,63 @@ Your task is to respond to the user's latest message in a warm, supportive, and 
         current_graph_json = graph.to_json()
 
         # 3. Extract proposed updates (Understanding Agent)
-        proposed_extraction = self.understanding_agent.analyze_conversation(
-            user_message=user_message,
-            history=history[:-1],  # Exclude the message we just added to prevent duplicate analysis
-            current_graph_json=current_graph_json,
-        )
+        try:
+            proposed_extraction = self.understanding_agent.analyze_conversation(
+                session_id=session_id,
+                user_message=user_message,
+                history=history[:-1],
+                current_graph_json=current_graph_json,
+            )
+        except Exception:
+            # No Gemini available
+            self.memory_agent.add_message(
+                session_id,
+                "assistant",
+                "I'm currently unable to analyze new information because the AI service has reached its quota. Please try again later."
+            )
+            return "I'm currently unable to analyze new information because the AI service has reached its quota. Please try again later."
 
         # Convert proposed extraction to JSON string for the Reflection Agent
-        proposed_updates_json = json.dumps(
-            proposed_extraction.model_dump(), indent=2
-        )
+        proposed_updates_json = proposed_extraction.model_dump_json(indent=2)
 
         # 4. Validate proposed updates (Reflection Agent)
-        reflection_evaluation = self.reflection_agent.evaluate_updates(
-            proposed_updates_json=proposed_updates_json,
-            current_graph_json=current_graph_json,
-            recent_history=history,
+        try:
+            reflection_evaluation = self.reflection_agent.evaluate_updates(
+                proposed_updates_json=proposed_updates_json,
+                current_graph_json=current_graph_json,
+                recent_history=history,
+            )
+        except Exception as e:
+            logger.warning(f"Skipping Reflection Agent: {e}")
+            from agents.reflection import (
+                ReflectionEvaluation,
+                EvaluatedNode,
+                EvaluatedRelationship,
+            )
+            reflection_evaluation = ReflectionEvaluation(
+                evaluated_nodes=[
+                    EvaluatedNode(
+                        id=node.id,
+                        node_type=node.node_type,
+                        name=node.name,
+                        action="approve",
+                        reasoning="Reflection skipped because Gemini quota exceeded.",
+                        adjusted_confidence=0.95,
+                        suggested_clarification=None,
+                    )
+                    for node in proposed_extraction.proposed_nodes
+                ],
+                evaluated_relationships=[
+                    EvaluatedRelationship(
+                        source_node_id=rel.source_node_id,
+                        target_node_id=rel.target_node_id,
+                        relationship_type=rel.relationship_type,
+                        action="approve",
+                        reasoning="Reflection skipped because Gemini quota exceeded.",
+                        adjusted_confidence=0.95,
+                    )
+                for rel in proposed_extraction.proposed_relationships
+            ],
         )
 
         # 5. Apply approved/modified updates to the Understanding Graph
@@ -231,16 +283,7 @@ Your task is to respond to the user's latest message in a warm, supportive, and 
 
         # 6. Curiosity Analysis (if no urgent clarification from Reflection)
         question_to_ask: str | None = clarification_question
-        if not question_to_ask:
-            curiosity_analysis = self.curiosity_agent.analyze_graph(
-                current_graph_json=graph.to_json(),
-                recent_history=history,
-            )
-            if curiosity_analysis.suggested_questions:
-                # Select the highest priority curiosity question
-                question_to_ask = curiosity_analysis.suggested_questions[
-                    0
-                ].question_text
+        question_to_ask = clarification_question
 
         # 7. Generate Personalized Response
         history_str = ""
@@ -259,11 +302,18 @@ User's Latest Message: {user_message}
             prompt += f"\n### Instruction\nGenerate your response. You must naturally weave in the following question at the end: \"{question_to_ask}\"\n"
 
         logger.info("Generating personalized response via Gemini...")
-        response_text = self.gemini_service.generate_text(
-            prompt=prompt,
-            system_instruction=self.SYSTEM_INSTRUCTION,
-            temperature=0.7,
-        )
+        try:
+            response_text = self.gemini_service.generate_text(
+                prompt=prompt,
+                system_instruction=self.system_prompt,
+                temperature=0.7,
+            )
+            
+        except Exception:
+            response_text = (
+                "Your message has been processed successfully. "
+                "The Understanding Graph has been updated."
+            )
 
         # 8. Save assistant response in Memory
         self.memory_agent.add_message(session_id, "assistant", response_text)

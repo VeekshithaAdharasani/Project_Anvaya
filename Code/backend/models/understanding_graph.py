@@ -6,15 +6,16 @@ nodes and relationships representing the user's cognitive state.
 It contains zero business reasoning, agent state, or database persistence logic.
 """
 
+import json
 from typing import Dict, List, Optional, Any, Set, Callable, Iterator
 import types
 
-from .node import Node
-from .relationship import Relationship
-from .evidence import Evidence
-from .enums.node_type import NodeType
-from .enums.relationship_type import RelationshipType
-from .enums.validation_status import ValidationStatus
+from models.node import Node
+from models.relationship import Relationship
+from models.evidence import Evidence
+from models.enums.node_type import NodeType
+from models.enums.relationship_type import RelationshipType
+from models.enums.validation_status import ValidationStatus
 
 
 class UnderstandingGraph:
@@ -513,6 +514,34 @@ class UnderstandingGraph:
         return True
 
     # --- Serialization ---
+
+    def to_json(self) -> str:
+        """Serializes the graph to a JSON string for agent prompts and debugging."""
+        return json.dumps(self.to_dict())
+
+    def get_adjacency_list(self) -> Dict[str, Any]:
+        """Returns a frontend-friendly adjacency list style representation of the graph."""
+        return {
+            "nodes": [
+                {
+                    "id": node.id,
+                    "label": node.name,
+                    "type": node.node_type.value,
+                    "data": node.to_dict(),
+                }
+                for node in self._nodes.values()
+            ],
+            "edges": [
+                {
+                    "id": rel.id,
+                    "source": rel.source_id,
+                    "target": rel.target_id,
+                    "type": rel.relationship_type.value,
+                    "data": rel.to_dict(),
+                }
+                for rel in self._relationships.values()
+            ],
+        }
 
     def to_dict(self) -> Dict[str, Any]:
         """

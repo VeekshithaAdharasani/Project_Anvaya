@@ -47,7 +47,7 @@ async def startup_event():
     logger.info("Initializing Project ANVAYA Services & Agents...")
 
     try:
-        # 1. Initialize Services
+        # 1. Initialize services
         gemini_service = GeminiService()
         graph_service = GraphService()
 
