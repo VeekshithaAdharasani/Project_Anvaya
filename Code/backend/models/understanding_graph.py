@@ -9,6 +9,7 @@ It contains zero business reasoning, agent state, or database persistence logic.
 import json
 from typing import Dict, List, Optional, Any, Set, Callable, Iterator
 import types
+from datetime import datetime, timezone
 
 from models.node import Node
 from models.relationship import Relationship
@@ -154,24 +155,31 @@ class UnderstandingGraph:
             raise ValueError(
                 f"Update Violation: Node with ID '{node_id}' does not exist in the graph."
             )
-
+        updated=False
         if name is not None:
             node.name = name
+            updated=True
         if description is not None:
             node.description = description
+            updated=True
         if confidence is not None:
             if not (0.0 <= confidence <= 1.0):
                 raise ValueError(
                     f"Validation Error: Confidence {confidence} must be between 0.0 and 1.0."
                 )
             node.confidence = confidence
+            updated=True
         if validation_status is not None:
             node.validation_status = validation_status
+            updated=True
         if evidence is not None:
             node.evidence = evidence
+            updated=True
 
         # Keep invariants centralized inside the domain models
         node.validate()
+        if updated:
+            node.updated_at=datetime.now(timezone.utc)
 
     def remove_node(self, node_id: str) -> Optional[Node]:
         """

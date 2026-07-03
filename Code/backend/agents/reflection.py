@@ -4,6 +4,8 @@ Reviews proposed graph updates against existing state and interaction histories 
 contradictions, filter emotional states, and recommend confidence levels.
 """
 
+from agents.understanding import UnderstandingProposal, ProposedNode, ProposedRelationship
+# TODO: After MVP, move these shared proposal models into a common models module.
 import json
 import logging
 import time
@@ -83,7 +85,6 @@ class ReflectionError(ReflectionAgentError):
     """Raised when structured generation, API calls, or parsing processes fail."""
     pass
 
-
 class ReflectionAgent:
     """
     The gatekeeper of the Understanding Layer.
@@ -91,7 +92,10 @@ class ReflectionAgent:
     conversation history. Detects contradictions, filters out temporary emotional
     states, and recommends confidence adjustments.
     """
-
+    CONFIDENCE_APPROVED = 0.85
+    CONFIDENCE_NEEDS_REVIEW = 0.55
+    CONFIDENCE_LOW = 0.40
+    CONFIDENCE_REJECTED = 0.0
     # Embedded instruction set containing instructions for gating operations
     DEFAULT_SYSTEM_INSTRUCTION: str = """You are the Reflection Agent for the Understanding Layer of Project ANVAYA.
 Your role is to act as a critical gatekeeper. You review the changes proposed by the Understanding Agent and decide whether to approve, reject, or modify them.
@@ -256,6 +260,122 @@ Use ONLY:
 ### Instructions
 Evaluate each proposed node and relationship. Determine if they should be approved, rejected, or modified. Align confidence scores and suggest clarification questions where there is uncertainty.
 """
+    def _build_history_text(self, recent_history: list[dict[str, str]]) -> str:
+        return "\n".join(
+            msg.get("content", "")
+            for msg in recent_history
+            if isinstance(msg.get("content"), str)
+        )
+
+    def _clamp_confidence(self, value: float) -> float:
+        return max(0.0, min(1.0, value))
+
+    def _evidence_is_present(self, evidence_quote: str, history_text: str) -> bool:
+        if not evidence_quote or not isinstance(evidence_quote, str):
+            return False
+        return evidence_quote.strip() in history_text
+
+    def _evaluate_node(
+        self,
+        node: ProposedNode,
+        history_text: str,
+    ) -> EvaluatedNode:
+        if not node.name.strip():
+            return EvaluatedNode(
+                id=node.id,
+                node_type=node.node_type,
+                name=node.name,
+                action="reject",
+                reasoning="The proposed node is missing a non-empty name.",
+                adjusted_confidence=self.CONFIDENCE_REJECTED,
+                suggested_clarification="Please provide a clear name for the proposed concept.",
+            )
+
+        if not node.evidence_quote.strip():
+            return EvaluatedNode(
+                id=node.id,
+                node_type=node.node_type,
+                name=node.name,
+                action="modify",
+                reasoning="The proposed node is missing an evidence quote.",
+                adjusted_confidence=self.CONFIDENCE_LOW,
+                suggested_clarification="Can you point to the part of the conversation that supports this proposed concept?",
+            )
+
+        if not self._evidence_is_present(node.evidence_quote, history_text):
+            return EvaluatedNode(
+                id=node.id,
+                node_type=node.node_type,
+                name=node.name,
+                action="modify",
+                reasoning="The evidence quote was not found in recent conversation history.",
+                adjusted_confidence=self.CONFIDENCE_NEEDS_REVIEW,
+                suggested_clarification="Please confirm where that evidence appears in the conversation.",
+            )
+
+        return EvaluatedNode(
+            id=node.id,
+            node_type=node.node_type,
+            name=node.name,
+            action="approve",
+            reasoning="The proposed node is structurally valid and has valid evidence in history.",
+            adjusted_confidence=self.CONFIDENCE_APPROVED,
+            suggested_clarification=None,
+        )
+
+    def _evaluate_relationship(
+        self,
+        relationship: ProposedRelationship,
+        history_text: str,
+    ) -> EvaluatedRelationship:
+        if not relationship.source_node_id or not relationship.target_node_id:
+            return EvaluatedRelationship(
+                source_node_id=relationship.source_node_id or "",
+                target_node_id=relationship.target_node_id or "",
+                relationship_type=relationship.relationship_type,
+                action="reject",
+                reasoning="The proposed relationship is missing a source or target identifier.",
+                adjusted_confidence=self.CONFIDENCE_REJECTED,
+            )
+
+        if relationship.source_node_id == relationship.target_node_id:
+            return EvaluatedRelationship(
+                source_node_id=relationship.source_node_id,
+                target_node_id=relationship.target_node_id,
+                relationship_type=relationship.relationship_type,
+                action="reject",
+                reasoning="A relationship cannot connect a node to itself.",
+                adjusted_confidence=self.CONFIDENCE_REJECTED,
+            )
+
+        if not relationship.evidence_quote.strip():
+            return EvaluatedRelationship(
+                source_node_id=relationship.source_node_id,
+                target_node_id=relationship.target_node_id,
+                relationship_type=relationship.relationship_type,
+                action="modify",
+                reasoning="The proposed relationship is missing an evidence quote.",
+                adjusted_confidence=self.CONFIDENCE_LOW,
+            )
+
+        if not self._evidence_is_present(relationship.evidence_quote, history_text):
+            return EvaluatedRelationship(
+                source_node_id=relationship.source_node_id,
+                target_node_id=relationship.target_node_id,
+                relationship_type=relationship.relationship_type,
+                action="modify",
+                reasoning="The evidence quote was not found in recent conversation history.",
+                adjusted_confidence=self.CONFIDENCE_NEEDS_REVIEW,
+            )
+
+        return EvaluatedRelationship(
+            source_node_id=relationship.source_node_id,
+            target_node_id=relationship.target_node_id,
+            relationship_type=relationship.relationship_type,
+            action="approve",
+            reasoning="The proposed relationship is structurally valid and has valid evidence in history.",
+            adjusted_confidence=self.CONFIDENCE_APPROVED,
+        )
 
     def evaluate_updates(
         self,
@@ -267,74 +387,53 @@ Evaluate each proposed node and relationship. Determine if they should be approv
         """
         Evaluates proposed changes against historical interactions and current graph representation.
         Returns a ReflectionEvaluation decision block without altering graph storage states.
-
-        Raises:
-            ValueError: If any parameters violate type or syntax limits.
-            ReflectionError: If structured model extraction or API transactions fail.
-
-        Time Complexity: Variable (API dependent)
-        Space Complexity: O(N) where N represents JSON parameter sizes.
         """
         start_time = time.perf_counter()
-
-        # Input constraints validation
-        self._validate_inputs(
-            session_id=session_id,
-            proposed_updates_json=proposed_updates_json,
-            current_graph_json=current_graph_json,
-            recent_history=recent_history,
-        )
-
-        prompt = self._build_prompt(
-            proposed_updates_json=proposed_updates_json,
-            current_graph_json=current_graph_json,
-            recent_history=recent_history,
-        )
-
-        prompt_size = len(prompt)
-        graph_size = len(current_graph_json)
-        proposal_size = len(proposed_updates_json)
-        history_length = len(recent_history)
-
-        logger.info(
-            "Session=%s Prompt=%d Graph=%d Proposal=%d History=%d",
-            session_id,
-            prompt_size,
-            graph_size,
-            proposal_size,
-            history_length,
-        )
-
         try:
-            evaluation = self.gemini_service.generate_json(
-                prompt=prompt,
-                response_schema=ReflectionEvaluation,
-                system_instruction=self.system_instruction,
-                temperature=0.1,  # Low temperature for precise, deterministic extraction
+            self._validate_inputs(
+                session_id=session_id,
+                proposed_updates_json=proposed_updates_json,
+                current_graph_json=current_graph_json,
+                recent_history=recent_history,
             )
-
-            # Metric compilation for structured, deterministic logging
+            _ = current_graph_json  # Intentionally unused during Phase 1 for compatibility
+            try:
+                proposal = UnderstandingProposal.model_validate_json(proposed_updates_json)
+            except Exception as e:
+                raise ValueError(
+                    f"Validation Error: Could not parse proposed_updates_json: {e}"
+                ) from e
+            history_text = self._build_history_text(recent_history)
+            evaluation = ReflectionEvaluation()
+            for node in proposal.proposed_nodes:
+                evaluation.evaluated_nodes.append(self._evaluate_node(node, history_text))
+            for relationship in proposal.proposed_relationships:
+                evaluation.evaluated_relationships.append(
+                    self._evaluate_relationship(relationship, history_text)
+                )
             latency = time.perf_counter() - start_time
-
             node_stats = {"approve": 0, "reject": 0, "modify": 0}
             for n in evaluation.evaluated_nodes:
                 node_stats[n.action] = node_stats.get(n.action, 0) + 1
-
             rel_stats = {"approve": 0, "reject": 0, "modify": 0}
             for r in evaluation.evaluated_relationships:
                 rel_stats[r.action] = rel_stats.get(r.action, 0) + 1
-
             logger.info(
-                f"Evaluation completed for session '{session_id}' in {latency:.3f}s. "
-                f"Nodes: Approved={node_stats['approve']}, Rejected={node_stats['reject']}, Modified={node_stats['modify']} | "
-                f"Relationships: Approved={rel_stats['approve']}, Rejected={rel_stats['reject']}, Modified={rel_stats['modify']}."
+                "Evaluation completed for session '%s' in %.3fs. "
+                "Nodes: Approved=%d, Rejected=%d, Modified=%d | "
+                "Relationships: Approved=%d, Rejected=%d, Modified=%d.",
+                session_id,
+                latency,
+                node_stats["approve"],
+                node_stats["reject"],
+                node_stats["modify"],
+                rel_stats["approve"],
+                rel_stats["reject"],
+                rel_stats["modify"],
             )
-
+            
             return evaluation
-
-        except ValueError:
-            raise
-        except GeminiConfigurationError:
+        except ValueError as ve:
             raise
         except Exception as e:
             latency = time.perf_counter() - start_time

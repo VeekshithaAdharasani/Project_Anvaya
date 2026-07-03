@@ -1,6 +1,7 @@
 import logging
 import json
 from typing import Any
+from datetime import datetime, timezone
 
 from services.gemini_service import GeminiService
 from services.graph_service import GraphService
@@ -13,6 +14,7 @@ from models.relationship import Relationship
 from models.enums.node_type import NodeType
 from models.enums.relationship_type import RelationshipType
 from models.enums.validation_status import ValidationStatus
+from models.understanding_graph import UnderstandingGraph
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -63,6 +65,38 @@ class CoordinatorAgent:
                 "Failed to load coordinator prompt file. Using embedded default."
             )
             return DEFAULT_SYSTEM_PROMPT
+    def _normalize_node_name(self, name: str) -> str:
+        """Normalizes node names for deterministic entity resolution."""
+        if not isinstance(name, str):
+            return ""
+        return " ".join(name.lower().split())
+    
+    def _find_existing_node(
+        self,
+        graph: UnderstandingGraph,
+        node_type: NodeType,
+        name: str,
+    ) -> Node | None:
+        normalized_target = self._normalize_node_name(name)
+        logger.info(
+            "Searching for node '%s' (%s)",
+            normalized_target,
+            node_type,
+        )
+        for candidate in graph.nodes.values():
+            logger.info(
+                "Candidate: '%s' (%s)",
+                self._normalize_node_name(candidate.name),
+                candidate.node_type,
+            )
+            if (
+                candidate.node_type == node_type
+                and self._normalize_node_name(candidate.name) == normalized_target
+            ):
+                logger.info("MATCH FOUND: %s", candidate.id)
+                return candidate
+        logger.info("NO MATCH FOUND")
+        return None    
 
     def process_message(self, session_id: str, user_message: str) -> str:
         """Processes an incoming user message through the entire multi-agent pipeline
@@ -140,9 +174,8 @@ class CoordinatorAgent:
         )
 
         # 5. Apply approved/modified updates to the Understanding Graph
-        # We maintain a mapping of temporary IDs (or names) of newly created nodes
-        # to their generated UUIDs so that relationships can be correctly linked.
-        id_mapping: dict[str, str] = {}
+        # We maintain a mapping of proposed node IDs to canonical graph node IDs.
+        resolved_node_ids: dict[str, str] = {}
         clarification_question: str | None = None
 
         # A. Process Nodes
@@ -178,15 +211,18 @@ class CoordinatorAgent:
                             validation_status=ValidationStatus.INFERRED,
                         )
                         existing_node.add_evidence(quote, source=session_id)
-                        id_mapping[eval_node.id] = eval_node.id
+                        
+                        resolved_node_ids[eval_node.id] = eval_node.id
+                        if proposed and proposed.id:
+                            resolved_node_ids[proposed.id] = eval_node.id
                 else:
                     # It's a newly proposed node
-                    # Find the proposed details by matching the name
+                    # Search the existing graph for the same node_type + normalized name
                     proposed = next(
                         (
                             n
-                            for n in proposed_extraction.proposed_nodes
-                            if n.name == eval_node.name
+                           for n in proposed_extraction.proposed_nodes
+                           if n.name == eval_node.name
                         ),
                         None,
                     )
@@ -198,6 +234,66 @@ class CoordinatorAgent:
                     quote = (
                         proposed.evidence_quote if proposed else user_message
                     )
+                    existing_node = self._find_existing_node(
+                        graph,
+                        NodeType(eval_node.node_type),
+                        eval_node.name,
+                    )
+
+                    if existing_node:
+                        if eval_node.id:
+                            resolved_node_ids[eval_node.id] = existing_node.id
+                        if proposed and proposed.id:
+                            resolved_node_ids[proposed.id] = existing_node.id
+
+                        old_confidence = existing_node.confidence
+                        update_kwargs: dict[str, Any] = {}
+
+                        old_desc = existing_node.description or ""
+                        if len(desc.strip()) > len(old_desc.strip()):
+                            update_kwargs["description"] = desc
+
+                        new_confidence = max(
+                            existing_node.confidence,
+                            eval_node.adjusted_confidence,
+                        )
+                        if new_confidence != existing_node.confidence:
+                            update_kwargs["confidence"] = new_confidence
+
+                        if update_kwargs:
+                            graph.update_node(existing_node.id, **update_kwargs)
+
+                        evidence_count_before = len(existing_node.evidence)
+                        existing_node.add_evidence(quote, source=session_id)
+                        evidence_count_after = len(existing_node.evidence)
+
+                        logger.info(
+                            "Resolved existing node '%s' (%s) for proposed node id '%s'.",
+                            existing_node.name,
+                            existing_node.id,
+                            eval_node.id,
+                        )
+                        if "description" in update_kwargs:
+                            logger.info(
+                                "Updated description for existing node '%s' (%s).",
+                                existing_node.name,
+                                existing_node.id,
+                            )
+                        if "confidence" in update_kwargs:
+                            logger.info(
+                                "Updated confidence for existing node '%s' (%s) from %.2f to %.2f.",
+                                existing_node.name,
+                                existing_node.id,
+                                old_confidence,
+                                new_confidence,
+                            )
+                        if evidence_count_after > evidence_count_before:
+                            logger.info(
+                                "Merged evidence into existing node '%s' (%s).",
+                                existing_node.name,
+                                existing_node.id,
+                            )
+                        continue
 
                     new_node = Node(
                         node_type=NodeType(eval_node.node_type),
@@ -209,10 +305,18 @@ class CoordinatorAgent:
                     new_node.add_evidence(quote, source=session_id)
                     graph.add_node(new_node)
 
-                    # Map both the proposed ID (if any) and name to the new UUID
+                    
                     if proposed and proposed.id:
-                        id_mapping[proposed.id] = new_node.id
-                    id_mapping[eval_node.name] = new_node.id
+                        resolved_node_ids[proposed.id] = new_node.id
+                    if eval_node.id:
+                        resolved_node_ids[eval_node.id] = new_node.id
+                    logger.info(
+                        "Created new node '%s' (%s) for proposed node id '%s'.",
+                        new_node.name,
+                        new_node.id,
+                        eval_node.id,
+                    )
+
 
                 # Capture clarification question if the Reflection Agent raised one
                 if (
@@ -225,10 +329,10 @@ class CoordinatorAgent:
         for eval_rel in reflection_evaluation.evaluated_relationships:
             if eval_rel.action in ("approve", "modify"):
                 # Resolve source and target IDs (mapping temp IDs/names to UUIDs if needed)
-                source_id = id_mapping.get(
+                source_id = resolved_node_ids.get(
                     eval_rel.source_node_id, eval_rel.source_node_id
                 )
-                target_id = id_mapping.get(
+                target_id = resolved_node_ids.get(
                     eval_rel.target_node_id, eval_rel.target_node_id
                 )
 
@@ -282,7 +386,6 @@ class CoordinatorAgent:
                         graph.add_relationship(new_rel)
 
         # 6. Curiosity Analysis (if no urgent clarification from Reflection)
-        question_to_ask: str | None = clarification_question
         question_to_ask = clarification_question
 
         # 7. Generate Personalized Response

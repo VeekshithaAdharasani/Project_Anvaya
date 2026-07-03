@@ -51,6 +51,23 @@
       "created_at": "2026-07-01T06:35:41.065455+00:00",
       "updated_at": "2026-07-01T06:35:41.065455+00:00",
       "validation_status": "inferred"
+    },
+    {
+      "id": "d1da7388-6715-4b27-9e98-b454886d2543",
+      "node_type": "skill",
+      "name": "Python",
+      "description": "The user has 3 years of experience learning Python.",
+      "confidence": 0.85,
+      "evidence": [
+        {
+          "quote": "I've been learning Python for 3 years",
+          "source": "Test",
+          "timestamp": "2026-07-02T08:20:20.737439+00:00"
+        }
+      ],
+      "created_at": "2026-07-02T08:20:20.736421+00:00",
+      "updated_at": "2026-07-02T08:20:20.737439+00:00",
+      "validation_status": "inferred"
     }
   ],
   "relationships": [
@@ -85,6 +102,22 @@
       ],
       "created_at": "2026-07-01T06:35:41.066458+00:00",
       "updated_at": "2026-07-01T06:35:41.066458+00:00"
+    },
+    {
+      "id": "bffffe9c-7c68-4627-b364-ab3422f28236",
+      "source_id": "d1da7388-6715-4b27-9e98-b454886d2543",
+      "target_id": "8dd8e7b5-5b9b-4bbd-a1e7-a5e19c4b24d1",
+      "relationship_type": "supports",
+      "confidence": 0.85,
+      "evidence": [
+        {
+          "quote": "I've been learning Python for 3 years",
+          "source": "Test",
+          "timestamp": "2026-07-02T08:20:20.738445+00:00"
+        }
+      ],
+      "created_at": "2026-07-02T08:20:20.737439+00:00",
+      "updated_at": "2026-07-02T08:20:20.738445+00:00"
     }
   ]
 }
