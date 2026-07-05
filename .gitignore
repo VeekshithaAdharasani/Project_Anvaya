@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+
+# Environment
+.env
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Node
+node_modules/
+
+# Build
+dist/
+build/
+
+# Logs
+*.log
