@@ -1,3 +1,6 @@
+import logging
+
+logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, Any
@@ -67,6 +70,7 @@ async def chat(request: Request, payload: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
 @router.get("/graph")
 async def get_graph(request: Request, session_id: str):
     """Retrieves the current Understanding Graph for a session, formatted for
@@ -76,9 +80,24 @@ async def get_graph(request: Request, session_id: str):
     graph_service = request.app.state.graph_service
     try:
         graph = graph_service.get_graph(session_id)
-        return graph.get_adjacency_list()
+        
+        # EXPOSE: Retrieve adjacency list and dynamically inject the user-facing reflection
+        adjacency_data = graph.get_adjacency_list()
+        adjacency_data["reflection"] = getattr(
+            graph, 
+            "latest_reflection", 
+            "I'm still reflecting on your journey."
+        )
+        adjacency_data["questions"] = getattr(
+            graph,
+            "latest_questions",
+            []
+        )
+        return adjacency_data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ...
 
 
 @router.post("/graph/node/edit")

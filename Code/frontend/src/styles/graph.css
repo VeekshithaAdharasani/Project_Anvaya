@@ -1,0 +1,148 @@
+/* Graph Wrapper & Container */
+.graph-view-canvas-wrapper {
+  width: 100%;
+  height: 500px;
+  overflow: hidden;
+  position: relative;
+  background-color: var(--card-bg-color);
+  border: none; /* Inherited styling from panel-container */
+}
+
+/* React Flow Grid Background styling override */
+.react-flow__background pattern circle {
+  fill: #E8E2D8 !important; /* Soft warm dots */
+}
+
+/* Connective Edges Style */
+.react-flow__edge-path {
+  stroke: #D4A373 !important; /* Soft gold curves */
+  stroke-width: 2px !important;
+  stroke-opacity: 0.45;
+  transition: stroke-opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), stroke-width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke-opacity: 0.85;
+  stroke-width: 2.5px !important;
+}
+
+/* Base Node Customization (.anvaya-node is added dynamically in the component) */
+.react-flow__node.anvaya-node {
+  background-color: var(--card-bg-color) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 4px 14px rgba(212, 163, 115, 0.05) !important;
+  padding: 12px 18px !important;
+  color: var(--text-color) !important;
+  font-family: var(--font-sans) !important;
+  font-size: 0.875rem !important;
+  font-weight: 500 !important;
+  text-align: left !important;
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), 
+              box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1), 
+              border-color 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  border-left: 4px solid var(--border-color) !important; /* Fallback default left accent */
+}
+
+/* Node Hover Interactions */
+.react-flow__node.anvaya-node:hover {
+  transform: translateY(-2px) scale(1.01);
+  border-color: var(--accent-color) !important;
+  box-shadow: 0 8px 24px rgba(212, 163, 115, 0.12) !important;
+  cursor: pointer;
+}
+
+/* Selected Node Indicator */
+.react-flow__node.anvaya-node.selected {
+  border-color: var(--accent-color) !important;
+  outline: none !important;
+  box-shadow: 0 10px 28px rgba(212, 163, 115, 0.18) !important;
+}
+
+/* --- Category Accents (Subtle Left Accent Tab Style) --- */
+.react-flow__node.anvaya-node-skills { border-left-color: #7C5CFC !important; }        /* Indigo */
+.react-flow__node.anvaya-node-goals { border-left-color: #82C99B !important; }         /* Sage Green */
+.react-flow__node.anvaya-node-interests { border-left-color: #F0A5C2 !important; }     /* Soft Rose */
+.react-flow__node.anvaya-node-values { border-left-color: #D4A373 !important; }        /* Gold Amber */
+.react-flow__node.anvaya-node-dreams { border-left-color: #B298FC !important; }        /* Muted Lavender */
+.react-flow__node.anvaya-node-learning { border-left-color: #6CA6CD !important; }      /* Library Blue */
+.react-flow__node.anvaya-node-motivations { border-left-color: #E29B7A !important; }   /* Soft Terracotta */
+.react-flow__node.anvaya-node-confidence { border-left-color: #62C1B5 !important; }    /* Pale Teal */
+
+/* Premium Navigation Controls Styling */
+.react-flow__controls {
+  box-shadow: var(--shadow-subtle) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 8px !important;
+  overflow: hidden;
+  background-color: var(--card-bg-color) !important;
+}
+
+.react-flow__controls-button {
+  background-color: var(--card-bg-color) !important;
+  border-bottom: 1px solid var(--border-color) !important;
+  color: var(--text-color) !important;
+  fill: var(--text-color) !important;
+  transition: var(--transition-smooth) !important;
+  height: 28px !important;
+  width: 28px !important;
+  padding: 4px !important;
+}
+
+.react-flow__controls-button:last-child {
+  border-bottom: none !important;
+}
+
+.react-flow__controls-button:hover {
+  background-color: var(--bg-color) !important;
+  color: var(--primary-color) !important;
+  fill: var(--primary-color) !important;
+}
+
+/* Premium Minimal Minimap Overrides */
+.react-flow__minimap {
+  border: 1px solid var(--border-color) !important;
+  border-radius: 8px !important;
+  background-color: var(--card-bg-color) !important;
+  box-shadow: var(--shadow-subtle) !important;
+}
+
+.react-flow__minimap-mask {
+  fill: rgba(212, 163, 115, 0.04) !important; /* Extremely soft amber tint */
+}
+
+/* Graph Empty State */
+.graph-empty-state-pane {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background-color: var(--card-bg-color);
+  padding: 2rem;
+  pointer-events: none;
+}
+
+.graph-empty-icon {
+  font-size: 2rem;
+  margin-bottom: 0.75rem;
+}
+
+.graph-empty-title {
+  font-family: var(--font-serif);
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: var(--text-color);
+  margin-bottom: 0.5rem;
+}
+
+.graph-empty-text {
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  color: var(--muted-color);
+  max-width: 300px;
+  line-height: 1.5;
+}

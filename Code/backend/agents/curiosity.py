@@ -1,8 +1,10 @@
 import logging
-from typing import Optional
+import re
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
-from services.gemini_service import GeminiService
+from models.understanding_graph import UnderstandingGraph
+from models.enums.node_type import NodeType
 
 logger = logging.getLogger(__name__)
 
@@ -34,112 +36,265 @@ class CuriosityAnalysis(BaseModel):
 
 
 class CuriosityAgent:
-    """The prober of the Understanding Layer.
+    """
+    Deterministic, rule-based Curiosity Agent.
 
-    Scans the current Understanding Graph to identify gaps (e.g., isolated nodes,
-    goals without motivations, low-confidence entries) and generates natural-sounding
-    questions to clarify them.
+    - Does NOT call any LLM or Gemini service.
+    - Is read-only: it never modifies the graph or saves data.
+    - Returns at most ONE suggestion in a CuriosityAnalysis.
+    - Public API remains `analyze_graph(current_graph_json: str, recent_history: list[dict])`.
     """
 
-    SYSTEM_INSTRUCTION = """You are the Curiosity Agent for the Understanding Layer of Project ANVAYA.
-Your task is to review the user's current Understanding Graph and identify gaps, uncertainties, or opportunities to deepen the AI's understanding of the user.
+    # Relationship keywords considered "supporting"
+    _SUPPORTING_REL_TYPES = {
+    "supports",
+    "motivates",
+    "requires",
+}
 
-### Gaps to Look For:
-1. **Low Confidence**: Any node or relationship with a confidence score below 0.6.
-2. **Missing Motivations**: A Goal or Dream that has no incoming 'motivates' or 'supports' relationship (we don't know *why* they want it).
-3. **Missing Dependencies**: A Goal that has no outgoing 'requires' relationship to a Skill (we don't know *what skills* they need or are using).
-4. **Isolated Nodes**: A node of any type that has no relationships connecting it to other parts of the graph.
-5. **Aspiration Gaps**: A Dream that has no connected Goals (they have a big dream, but no active short-term goals to get there).
+    def __init__(self, gemini_service: Any = None) -> None:
+        # Accept gemini_service only for compatibility with existing startup code.
+        # It is intentionally ignored to ensure no LLM usage.
+        self._ignored = gemini_service
 
-### Rules for Question Design:
-1. **Conversational Tone**: Write questions that sound natural, warm, and supportive. Avoid clinical database-like questions (e.g., instead of "What motivates your goal of learning Python?", ask "I'm curious, what inspired you to start learning Python? What are you hoping to build with it?").
-2. **One at a Time**: Although you can suggest multiple questions in the JSON output, each individual question should focus on a single clear gap. The Coordinator will select the best one.
-3. **Non-Intrusive**: Do not pry or ask overly sensitive personal questions. Focus on their growth, learning, goals, and dreams.
-4. **No Gaps?**: If the graph is well-connected and all confidence scores are high, you do not need to suggest any questions (return an empty list).
-
-### Output Format
-
-Return ONLY valid JSON.
-
-The JSON MUST exactly match this structure:
-
-{{
-  "suggested_questions": [
-    {{
-      "target_node_id": null,
-      "target_relationship_type": null,
-      "reasoning": "",
-      "question_text": ""
-    }}
-  ]
-}}
-
-Do NOT return a JSON array.
-
-Do NOT use keys like:
-- question
-- priority
-
-Always return the root object with the key:
-
-suggested_questions
-
-Return only JSON.
-"""
-
-    def __init__(self, gemini_service: GeminiService):
-        self.gemini_service = gemini_service
-
+    # Public API preserved
     def analyze_graph(
-        self, current_graph_json: str, recent_history: list[dict[str, str]]
+        self, 
+        graph: UnderstandingGraph,
+        recent_history: List[Dict[str, str]]
     ) -> CuriosityAnalysis:
-        """Analyzes the current graph and conversation history to generate curiosity questions."""
-        # Format history
-        history_str = ""
-        for msg in recent_history:
-            role = "User" if msg["role"] == "user" else "Assistant"
-            history_str += f"{role}: {msg['content']}\n"
+        """
+        Analyze the provided graph JSON and recent conversation deterministically.
 
-        prompt = f"""### Current Understanding Graph (JSON State)
-{current_graph_json}
+        Returns at most one CuriosityQuestion according to the priority order:
+          1. Low-confidence nodes (confidence < 0.6)
+          2. Dreams without supporting skills/goals
+          3. Goals without motivation
+          4. Isolated nodes
+          5. Nodes with only one evidence item
+          6. Missing important relationships (e.g., goals without required skills)
 
-### Recent Conversation History
-{history_str}
+        The function is defensive against malformed input and logs errors instead
+        of raising, returning an empty suggestion list on failure.
+        """
+        all_nodes = sorted(
+            graph.nodes.values(),
+            key=lambda n: (n.name or "").lower(),
+        )
 
-### Instructions
+        # Helper predicates
+        def incoming_rels(node_id: str):
+            try:
+                return graph.get_incoming_relationships(node_id)
+            except Exception:
+                return []
 
-Scan the graph for missing motivations, isolated nodes, low-confidence concepts, and missing relationships.
+        def outgoing_rels(node_id: str):
+            try:
+                return graph.get_outgoing_relationships(node_id)
+            except Exception:
+                return []
 
-Return ONLY valid JSON.
+        def is_isolated(node_id: str) -> bool:
+            return len(incoming_rels(node_id)) == 0 and len(outgoing_rels(node_id)) == 0
 
-The root JSON object MUST contain exactly one field:
+        def rel_types_of(rels: List[Any]) -> List[str]:
+            # relationship_type may be enum or object; coerce to string values deterministically
+            types = []
+            for r in rels:
+                try:
+                    v = getattr(r, "relationship_type")
+                    types.append(v.value if hasattr(v, "value") else str(v))
+                except Exception:
+                    # Fallback: try dict access
+                    try:
+                        types.append(r.get("relationship_type", ""))
+                    except Exception:
+                        types.append("")
+            return [t.lower() for t in types if isinstance(t, str)]
 
-{{
-  "suggested_questions": []
-}}
+        def description_text(node) -> str:
+            desc = node.description or ""
+            # include evidence quotes for simple heuristics
+            try:
+                quotes = " ".join([e.quote for e in (node.evidence or []) if hasattr(e, "quote")])
+            except Exception:
+                quotes = ""
+            return f"{desc} {quotes}".strip()
 
-Each question must contain:
+        def has_timeline(text: str) -> bool:
+            if not text:
+                return False
+            # Deterministic, conservative timeline detection
+            patterns = [
+                r"\b\d{4}\b",  # year like 2026
+                r"\b(in|by|within|before|after)\b.*\b(year|month|week|day|month|years|months)\b",
+                r"\b\d+\s+(years|year|months|month|weeks|weeks|days|day)\b",
+            ]
+            for p in patterns:
+                if re.search(p, text, flags=re.IGNORECASE):
+                    return True
+            return False
 
-- target_node_id
-- target_relationship_type
-- reasoning
-- question_text
+        def has_experience_indicator(text: str) -> bool:
+            if not text:
+                return False
+            return bool(re.search(r"\b(experience|experienced|years?|yrs|projects?)\b", text, flags=re.IGNORECASE))
 
-Do not return a list as the root object.
-Do not use markdown."""
-        logger.info("Analyzing graph for curiosity gaps...")
+        # Priority 1: Low-confidence nodes (< 0.6), deterministic ordering by confidence then name
         try:
-            logger.info(prompt)
-            analysis = self.gemini_service.generate_json(
-                prompt=prompt,
-                response_schema=CuriosityAnalysis,
-                system_instruction=self.SYSTEM_INSTRUCTION,
-                temperature=0.3,  # Slightly higher temperature for creative, natural questions
+            low_conf_nodes = sorted(
+                [n for n in graph.nodes.values() if getattr(n, "confidence", None) is not None and n.confidence < 0.6],
+                key=lambda n: (n.confidence if n.confidence is not None else 0.0, (n.name or "").lower()),
             )
-            logger.info(
-                f"Curiosity analysis complete. Generated {len(analysis.suggested_questions)} suggested questions."
-            )
-            return analysis
+            if low_conf_nodes:
+                node = low_conf_nodes[0]
+                question_text = (
+                    f"I noticed I'm not very confident about \"{node.name}\" (confidence {node.confidence:.2f}). "
+                    "Could you tell me a bit more about this so I understand it better?"
+                )
+                q = CuriosityQuestion(
+                    target_node_id=node.id,
+                    target_relationship_type=None,
+                    reasoning=f"Low-confidence node detected: '{node.name}' (confidence={node.confidence:.2f}).",
+                    question_text=question_text,
+                )
+                logger.info("CuriosityAgent: selected low-confidence node '%s'", node.name)
+                return CuriosityAnalysis(suggested_questions=[q])
         except Exception as e:
-            logger.error(f"Failed to perform curiosity analysis: {e}")
-            raise
+            logger.exception("CuriosityAgent: error during low-confidence check: %s", e)
+
+        # Priority 2: Dreams without supporting skills/goals
+        try:
+            dreams = sorted(graph.get_nodes_by_type(NodeType.DREAM), key=lambda n: (n.name or "").lower())
+            for dream in dreams:
+                # Check for incoming supporting relationships OR outgoing links to goals/skills
+                inc_types = rel_types_of(incoming_rels(dream.id))
+                out_rels = outgoing_rels(dream.id)
+                out_types = rel_types_of(out_rels)
+                # Determine if there is any support/motivation or connections to skills/goals
+                has_supporting = any(t in self._SUPPORTING_REL_TYPES for t in inc_types)
+                has_goal_or_skill = any(
+                    (graph.get_node(r.target_id).node_type == NodeType.GOAL or graph.get_node(r.target_id).node_type == NodeType.SKILL)
+                    for r in out_rels
+                    if graph.get_node(r.target_id) is not None
+                )
+                if not has_supporting and not has_goal_or_skill:
+                    question_text = (
+                        f"Your dream \"{dream.name}\" sounds meaningful — what skills or short-term goals "
+                        "are you focusing on to move toward that dream?"
+                    )
+                    q = CuriosityQuestion(
+                        target_node_id=dream.id,
+                        target_relationship_type="requires",
+                        reasoning=f"Dream '{dream.name}' has no supporting skills/goals connected.",
+                        question_text=question_text,
+                    )
+                    logger.info("CuriosityAgent: selected dream without support '%s'", dream.name)
+                    return CuriosityAnalysis(suggested_questions=[q])
+        except Exception as e:
+            logger.exception("CuriosityAgent: error during dream-support check: %s", e)
+
+        # Priority 3: Goals without motivation (no incoming 'motivates' or 'supports')
+        try:
+            goals = sorted(graph.get_nodes_by_type(NodeType.GOAL), key=lambda n: (n.name or "").lower())
+            for goal in goals:
+                inc_types = rel_types_of(incoming_rels(goal.id))
+                if not any(t in ("motivates", "supports", "influences") for t in inc_types):
+                    question_text = (
+                        f"For the goal \"{goal.name}\", what is motivating you to pursue it? "
+                        "Understanding what drives it helps me support you better."
+                    )
+                    q = CuriosityQuestion(
+                        target_node_id=goal.id,
+                        target_relationship_type="motivates",
+                        reasoning=f"Goal '{goal.name}' lacks incoming motivation/support relationships.",
+                        question_text=question_text,
+                    )
+                    logger.info("CuriosityAgent: selected goal without motivation '%s'", goal.name)
+                    return CuriosityAnalysis(suggested_questions=[q])
+        except Exception as e:
+            logger.exception("CuriosityAgent: error during goal-motivation check: %s", e)
+
+        # Priority 4: Isolated nodes (no incoming or outgoing relationships)
+        try:
+            for node in all_nodes:
+                if is_isolated(node.id):
+                    question_text = (
+                        f"I see \"{node.name}\" listed but it doesn't seem connected to your other goals or skills. "
+                        "Could you tell me how this fits into what you're working on?"
+                    )
+                    q = CuriosityQuestion(
+                        target_node_id=node.id,
+                        target_relationship_type=None,
+                        reasoning=f"Isolated node detected: '{node.name}'.",
+                        question_text=question_text,
+                    )
+                    logger.info("CuriosityAgent: selected isolated node '%s'", node.name)
+                    return CuriosityAnalysis(suggested_questions=[q])
+        except Exception as e:
+            logger.exception("CuriosityAgent: error during isolation check: %s", e)
+
+        # Priority 5: Nodes with only one evidence item (ask for more evidence/context)
+        try:
+            for node in all_nodes:
+                evidence_count = 0
+                try:
+                    evidence_count = len(node.evidence or [])
+                except Exception:
+                    # Fallback: attempt to inspect as iterable
+                    try:
+                        evidence_count = sum(1 for _ in (node.evidence or []))
+                    except Exception:
+                        evidence_count = 0
+                if evidence_count <= 1:
+                    question_text = (
+                        f"Could you share a bit more about \"{node.name}\"? "
+                        "A few examples or details would help me be more certain about it."
+                    )
+                    q = CuriosityQuestion(
+                        target_node_id=node.id,
+                        target_relationship_type=None,
+                        reasoning=f"Node '{node.name}' has only {evidence_count} evidence item(s).",
+                        question_text=question_text,
+                    )
+                    logger.info("CuriosityAgent: selected node with sparse evidence '%s' (evidence_count=%d)", node.name, evidence_count)
+                    return CuriosityAnalysis(suggested_questions=[q])
+        except Exception as e:
+            logger.exception("CuriosityAgent: error during evidence-sparsity check: %s", e)
+
+        # Priority 6: Missing important relationships (e.g., goals without required skills)
+        try:
+            for goal in goals:
+                # Check for outgoing 'requires' relationships to SKILL nodes
+                out_rels = outgoing_rels(goal.id)
+                required_skill_linked = False
+                for r in out_rels:
+                    try:
+                        rel_type = getattr(r, "relationship_type")
+                        rel_val = rel_type.value if hasattr(rel_type, "value") else str(rel_type)
+                        if str(rel_val).lower() == "requires":
+                            target = graph.get_node(r.target_id)
+                            if target and target.node_type == NodeType.SKILL:
+                                required_skill_linked = True
+                                break
+                    except Exception:
+                        continue
+                if not required_skill_linked:
+                    question_text = (
+                        f"For your goal \"{goal.name}\", are there specific skills you feel you need or are developing to achieve it?"
+                    )
+                    q = CuriosityQuestion(
+                        target_node_id=goal.id,
+                        target_relationship_type="requires",
+                        reasoning=f"Goal '{goal.name}' has no outgoing 'requires' relationship to a skill.",
+                        question_text=question_text,
+                    )
+                    logger.info("CuriosityAgent: selected goal missing required-skill relationship '%s'", goal.name)
+                    return CuriosityAnalysis(suggested_questions=[q])
+        except Exception as e:
+            logger.exception("CuriosityAgent: error during missing-relationship check: %s", e)
+
+        # If we reach here, no curiosity question is necessary
+        logger.debug("CuriosityAgent: no gaps found; returning empty suggestion list.")
+        return CuriosityAnalysis(suggested_questions=[])

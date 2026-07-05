@@ -16,6 +16,8 @@ from models.enums.relationship_type import RelationshipType
 from models.enums.validation_status import ValidationStatus
 from models.understanding_graph import UnderstandingGraph
 from pathlib import Path
+from google.api_core.exceptions import ResourceExhausted
+
 
 logger = logging.getLogger(__name__)
 
@@ -104,13 +106,13 @@ class CoordinatorAgent:
         and returns the final personalized response.
         """
         logger.info(f"Processing message for session '{session_id}'...")
+        graph = self.graph_service.get_graph(session_id)
 
         # 1. Save user message in Memory
         self.memory_agent.add_message(session_id, "user", user_message)
 
         # 2. Retrieve context
         history = self.memory_agent.get_messages(session_id, limit=15)
-        graph = self.graph_service.get_graph(session_id)
         current_graph_json = graph.to_json()
 
         # 3. Extract proposed updates (Understanding Agent)
@@ -121,14 +123,22 @@ class CoordinatorAgent:
                 history=history[:-1],
                 current_graph_json=current_graph_json,
             )
-        except Exception:
+        except ResourceExhausted:
             # No Gemini available
             self.memory_agent.add_message(
                 session_id,
                 "assistant",
-                "I'm currently unable to analyze new information because the AI service has reached its quota. Please try again later."
+                (
+                    "I successfully updated your understanding graph with any information I could process."
+                    "However, I'm temporarily unable to generate a full conversational response because "
+                    "the AI service has reached its usage limit. Please try again in a little while."
+                )
             )
-            return "I'm currently unable to analyze new information because the AI service has reached its quota. Please try again later."
+            return (
+                "I successfully updated your understanding graph with any information I could process."
+                "However, I'm temporarily unable to generate a full conversational response because "
+                "the AI service has reached its usage limit. Please try again in a little while."
+            )
 
         # Convert proposed extraction to JSON string for the Reflection Agent
         proposed_updates_json = proposed_extraction.model_dump_json(indent=2)
@@ -171,7 +181,17 @@ class CoordinatorAgent:
                     )
                 for rel in proposed_extraction.proposed_relationships
             ],
+            reflection_text="I successfully updated your understanding graph with any information I could process. However, I'm temporarily unable to generate a full conversational response because the AI service has reached its usage limit."
         )
+
+        # PERSIST: Bind the companion reflection text dynamically in memory to the active graph instance
+        # graph.latest_reflection = getattr(
+        #     reflection_evaluation, 
+        #     "reflection_text", 
+        #     "I'm still reflecting on your journey."
+        # )
+        graph.latest_reflection = reflection_evaluation.reflection_text
+        
 
         # 5. Apply approved/modified updates to the Understanding Graph
         # We maintain a mapping of proposed node IDs to canonical graph node IDs.
@@ -241,6 +261,7 @@ class CoordinatorAgent:
                     )
 
                     if existing_node:
+                        resolved_node_ids[existing_node.name] = existing_node.id
                         if eval_node.id:
                             resolved_node_ids[eval_node.id] = existing_node.id
                         if proposed and proposed.id:
@@ -304,8 +325,8 @@ class CoordinatorAgent:
                     )
                     new_node.add_evidence(quote, source=session_id)
                     graph.add_node(new_node)
-
-                    
+                    # Map the new node's actual name to its generated graph ID
+                    resolved_node_ids[new_node.name] = new_node.id
                     if proposed and proposed.id:
                         resolved_node_ids[proposed.id] = new_node.id
                     if eval_node.id:
@@ -326,14 +347,39 @@ class CoordinatorAgent:
                     clarification_question = eval_node.suggested_clarification
 
         # B. Process Relationships
+        logger.info(
+            "Understanding proposed %d relationships.",
+            len(proposed_extraction.proposed_relationships),
+        )
+        logger.info(
+            "Reflection returned %d relationships.",
+            len(reflection_evaluation.evaluated_relationships),
+        )
         for eval_rel in reflection_evaluation.evaluated_relationships:
+            logger.info(
+                "Processing relationship: %s -> %s (%s), action=%s",
+                eval_rel.source_node_id,
+                eval_rel.target_node_id,
+                eval_rel.relationship_type,
+                eval_rel.action,
+            )
             if eval_rel.action in ("approve", "modify"):
                 # Resolve source and target IDs (mapping temp IDs/names to UUIDs if needed)
                 source_id = resolved_node_ids.get(
-                    eval_rel.source_node_id, eval_rel.source_node_id
+                    eval_rel.source_node_id, 
+                    eval_rel.source_node_id,
                 )
                 target_id = resolved_node_ids.get(
-                    eval_rel.target_node_id, eval_rel.target_node_id
+                    eval_rel.target_node_id, 
+                    eval_rel.target_node_id,
+                )
+
+                logger.info("Resolved source_id: %s", source_id)
+                logger.info("Resolved target_id: %s", target_id)
+                logger.info(
+                    "Source exists: %s | Target exists: %s",
+                    source_id in graph.nodes,
+                    target_id in graph.nodes,
                 )
 
                 # Verify both nodes exist in the graph before creating the edge
@@ -350,6 +396,7 @@ class CoordinatorAgent:
                         ),
                         None,
                     )
+                    logger.info(f"Existing relationship found: {existing_rel is not None}")
 
                     proposed = next(
                         (
@@ -366,6 +413,7 @@ class CoordinatorAgent:
                     )
 
                     if existing_rel:
+                        logger.info("Updating existing relationship")
                         # Update existing relationship
                         graph.update_relationship(
                             existing_rel.id,
@@ -374,6 +422,7 @@ class CoordinatorAgent:
                         existing_rel.add_evidence(quote, source=session_id)
                     else:
                         # Create a new relationship
+                        logger.info("Creating NEW relationship")
                         new_rel = Relationship(
                             source_id=source_id,
                             target_id=target_id,
@@ -384,9 +433,29 @@ class CoordinatorAgent:
                         )
                         new_rel.add_evidence(quote, source=session_id)
                         graph.add_relationship(new_rel)
+                        logger.info(
+                            f"Relationship added: {new_rel.source_id} -> {new_rel.target_id}"
+                        )
+                        logger.info(
+                            f"Total relationships in graph: {len(graph.relationships)}"
+                        )
 
         # 6. Curiosity Analysis (if no urgent clarification from Reflection)
         question_to_ask = clarification_question
+        if not question_to_ask:
+            curiosity_analysis = self.curiosity_agent.analyze_graph(
+                graph=graph,
+                recent_history=history,
+            )
+            graph.latest_questions = [
+                q.question_text
+                for q in curiosity_analysis.suggested_questions
+            ]
+            
+            if curiosity_analysis.suggested_questions:
+                question_to_ask = (
+                    curiosity_analysis.suggested_questions[0].question_text
+                )
 
         # 7. Generate Personalized Response
         history_str = ""

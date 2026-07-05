@@ -1,0 +1,179 @@
+/* Core Layout Container */
+.chat-panel-container {
+  display: flex;
+  flex-direction: column;
+  height: 500px; /* Symmetrical match with GraphView height */
+  background: transparent;
+}
+
+/* Scrollable History Container */
+.chat-history {
+  flex: 1;
+  padding: 1.75rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem; /* Generous spacing between messages */
+  scroll-behavior: smooth;
+}
+
+/* Scrollbar styling */
+.chat-history::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-history::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-history::-webkit-scrollbar-thumb {
+  background-color: rgba(44, 44, 44, 0.08);
+  border-radius: 99px;
+}
+
+/* Message Styles */
+.chat-message {
+  max-width: 80%;
+  padding: 1rem 1.25rem;
+  font-family: var(--font-sans);
+  font-size: 0.925rem;
+  line-height: 1.6;
+  word-break: break-word;
+  transition: var(--transition-smooth);
+  animation: chatMessageFadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes chatMessageFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* User Message Bubble */
+.chat-message-user {
+  align-self: flex-end;
+  background-color: var(--primary-color) !important;
+  color: #ffffff !important;
+  border-radius: 16px 16px 4px 16px;
+  box-shadow: 0 4px 12px rgba(124, 92, 252, 0.12);
+}
+
+/* Assistant Message Bubble */
+.chat-message-assistant {
+  align-self: flex-start;
+  background-color: var(--bg-color) !important;
+  color: var(--text-color) !important;
+  border: 1px solid var(--border-color);
+  border-radius: 16px 16px 16px 4px;
+  box-shadow: var(--shadow-subtle);
+}
+
+/* Sub-info / Status bar inside the chat */
+.chat-status-bar {
+  padding: 0.6rem 1.75rem;
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  color: var(--muted-color);
+  background-color: rgba(232, 226, 216, 0.2);
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Typing / Reflection Indicator */
+.chat-typing-indicator {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 0.85rem;
+  color: var(--muted-color);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-left: 0.25rem;
+  animation: indicatorPulse 2s infinite ease-in-out;
+}
+
+@keyframes indicatorPulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+/* Input Area Form */
+.chat-input-form {
+  display: flex;
+  align-items: flex-end;
+  border-top: 1px solid var(--border-color);
+  padding: 1.25rem 1.75rem;
+  gap: 1rem;
+  background-color: var(--card-bg-color);
+}
+
+/* Text Input Area */
+.chat-textarea {
+  flex: 1;
+  padding: 0.875rem 1.25rem;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  resize: none;
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  outline: none;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  transition: var(--transition-smooth);
+}
+
+.chat-textarea::placeholder {
+  color: var(--muted-color);
+  opacity: 0.8;
+}
+
+.chat-textarea:focus {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 3px rgba(212, 163, 115, 0.15);
+  background-color: var(--card-bg-color);
+}
+
+/* Send Button */
+.chat-send-btn {
+  height: 42px;
+  padding: 0 1.5rem;
+  border: none;
+  border-radius: 21px; /* Pill profile */
+  background-color: var(--primary-color);
+  color: #ffffff;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: var(--transition-smooth);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  box-shadow: 0 4px 12px rgba(124, 92, 252, 0.15);
+}
+
+.chat-send-btn:hover:not(:disabled) {
+  background-color: #633FE0; /* Refined deepened violet */
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(124, 92, 252, 0.2);
+}
+
+.chat-send-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.chat-send-btn:disabled {
+  background-color: var(--border-color) !important;
+  color: var(--muted-color) !important;
+  box-shadow: none !important;
+  cursor: default;
+}

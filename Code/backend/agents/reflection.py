@@ -5,7 +5,6 @@ contradictions, filter emotional states, and recommend confidence levels.
 """
 
 from agents.understanding import UnderstandingProposal, ProposedNode, ProposedRelationship
-# TODO: After MVP, move these shared proposal models into a common models module.
 import json
 import logging
 import time
@@ -72,6 +71,11 @@ class ReflectionEvaluation(BaseModel):
     evaluated_relationships: list[EvaluatedRelationship] = Field(
         default_factory=list
     )
+    # Dynamic companion-style reflection field with a safe default fallback
+    reflection_text: str = Field(
+        default="I'm still reflecting on your journey.",
+        description="A warm, supportive, companion-style reflection summarizing the user's progress and connections today, formatted for the user's journal."
+    )
 
 
 # --- Custom Exception Classes ---
@@ -116,7 +120,7 @@ Your role is to act as a critical gatekeeper. You review the changes proposed by
 
 Return ONLY valid JSON.
 
-The top-level object MUST have exactly these two fields:
+The top-level object MUST have exactly these three fields:
 
 {
   "evaluated_nodes": [
@@ -139,7 +143,8 @@ The top-level object MUST have exactly these two fields:
       "reasoning": "...",
       "adjusted_confidence": 0.95
     }
-  ]
+  ],
+  "reflection_text": "A warm, supportive, companion-style reflection summarizing the user's progress and connections today, formatted for their journal. Keep it to 1-2 sentences, written in the second person ('you')."
 }
 
 Do NOT use keys such as:
@@ -152,6 +157,7 @@ Use ONLY:
 
 - evaluated_nodes
 - evaluated_relationships
+- reflection_text
    """
 
     def __init__(
@@ -159,9 +165,6 @@ Use ONLY:
         gemini_service: GeminiService,
         prompt_path: str | None = None,
     ) -> None:
-        """
-        Initializes the agent, loading prompt instructions from the specified path.
-        """
         self.gemini_service: GeminiService = gemini_service
 
         if prompt_path:
@@ -176,9 +179,6 @@ Use ONLY:
         self.system_instruction: str = self._load_system_prompt()
 
     def _load_system_prompt(self) -> str:
-        """
-        Loads the system instruction from the filesystem, falling back to embedded prompt configuration on failure.
-        """
         if self.prompt_path.exists():
             try:
                 return self.prompt_path.read_text(encoding="utf-8")
@@ -196,9 +196,6 @@ Use ONLY:
         current_graph_json: str,
         recent_history: list[dict[str, str]],
     ) -> None:
-        """
-        Validates all input structures and raises clear ValueErrors on failure.
-        """
         if not isinstance(session_id, str) or not session_id.strip():
             raise ValueError("Validation Error: 'session_id' must be a non-empty string.")
 
@@ -223,7 +220,6 @@ Use ONLY:
                     f"Validation Error: Message at index {idx} in recent_history contains empty fields."
                 )
 
-        # Confirm JSON syntax correctness
         try:
             json.loads(proposed_updates_json)
         except json.JSONDecodeError as e:
@@ -240,9 +236,6 @@ Use ONLY:
         current_graph_json: str,
         recent_history: list[dict[str, str]],
     ) -> str:
-        """
-        Assembles the evaluation instruction prompt.
-        """
         history_str = "\n".join(
             f"{'User' if m['role']=='user' else 'Assistant'}: {m['content']}"
             for m in recent_history
@@ -376,6 +369,16 @@ Evaluate each proposed node and relationship. Determine if they should be approv
             reasoning="The proposed relationship is structurally valid and has valid evidence in history.",
             adjusted_confidence=self.CONFIDENCE_APPROVED,
         )
+    def _extract_and_clean_json(self, text: str) -> str:
+        """Remove Markdown code fences from Gemini JSON responses."""
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            first_newline = cleaned.find("\n")
+            if first_newline != -1:
+                cleaned = cleaned[first_newline:].strip()
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3].strip()
+        return cleaned
 
     def evaluate_updates(
         self,
@@ -384,10 +387,6 @@ Evaluate each proposed node and relationship. Determine if they should be approv
         recent_history: list[dict[str, str]],
         session_id: str = "default_session",
     ) -> ReflectionEvaluation:
-        """
-        Evaluates proposed changes against historical interactions and current graph representation.
-        Returns a ReflectionEvaluation decision block without altering graph storage states.
-        """
         start_time = time.perf_counter()
         try:
             self._validate_inputs(
@@ -396,7 +395,7 @@ Evaluate each proposed node and relationship. Determine if they should be approv
                 current_graph_json=current_graph_json,
                 recent_history=recent_history,
             )
-            _ = current_graph_json  # Intentionally unused during Phase 1 for compatibility
+            _ = current_graph_json
             try:
                 proposal = UnderstandingProposal.model_validate_json(proposed_updates_json)
             except Exception as e:
@@ -411,36 +410,30 @@ Evaluate each proposed node and relationship. Determine if they should be approv
                 evaluation.evaluated_relationships.append(
                     self._evaluate_relationship(relationship, history_text)
                 )
+            
+            # Request dynamic model summary reflection
+            prompt = self._build_prompt(proposed_updates_json, current_graph_json, recent_history)
+            try:
+                raw_response = self.gemini_service.generate_text(
+                    prompt=prompt,
+                    system_instruction=self.system_instruction,
+                    temperature=0.2
+                )
+                logger.info("Raw Reflection Agent Gemini response:\n%s", raw_response)
+                cleaned_response = self._extract_and_clean_json(raw_response)
+                parsed_json = json.loads(cleaned_response)
+                evaluation.reflection_text = parsed_json.get("reflection_text", "I'm still reflecting on your journey.")
+            except Exception as e:
+                logger.warning(f"Failed to fetch parsed companion reflection text; using fallback: {e}")
+                evaluation.reflection_text = "I'm still reflecting on your journey."
+
             latency = time.perf_counter() - start_time
-            node_stats = {"approve": 0, "reject": 0, "modify": 0}
-            for n in evaluation.evaluated_nodes:
-                node_stats[n.action] = node_stats.get(n.action, 0) + 1
-            rel_stats = {"approve": 0, "reject": 0, "modify": 0}
-            for r in evaluation.evaluated_relationships:
-                rel_stats[r.action] = rel_stats.get(r.action, 0) + 1
-            logger.info(
-                "Evaluation completed for session '%s' in %.3fs. "
-                "Nodes: Approved=%d, Rejected=%d, Modified=%d | "
-                "Relationships: Approved=%d, Rejected=%d, Modified=%d.",
-                session_id,
-                latency,
-                node_stats["approve"],
-                node_stats["reject"],
-                node_stats["modify"],
-                rel_stats["approve"],
-                rel_stats["reject"],
-                rel_stats["modify"],
-            )
+            logger.info("Evaluation completed for session '%s' in %.3fs.", session_id, latency)
             
             return evaluation
         except ValueError as ve:
             raise
         except Exception as e:
             latency = time.perf_counter() - start_time
-            logger.exception(
-                f"Evaluation Failure: Reflection evaluation failed for session '{session_id}' "
-                f"after {latency:.3f}s: {e}"
-            )
-            raise ReflectionError(
-                f"Reflection evaluation failed for session '{session_id}': {e}"
-            ) from e
+            logger.exception(f"Evaluation Failure in session '{session_id}': {e}")
+            raise ReflectionError(f"Reflection evaluation failed for session '{session_id}': {e}") from e

@@ -153,6 +153,12 @@ Your task is to analyze the user's latest message, recent conversation history, 
 3. **Naming**: Keep names concise, capitalized, and noun-focused (e.g., use 'Machine Learning' instead of 'I like machine learning').
 4. **Context**: Use the description field to explain the context of why this node or relationship is relevant to the user.
 5. **No Hallucinations**: Only extract information explicitly mentioned or strongly implied by the text.
+6. Relationship Discovery:
+After extracting new concepts, compare them with every existing node in the Understanding Graph.
+If the user's latest message or recent conversation explicitly indicates that two concepts are related, propose a relationship.
+Prefer creating meaningful relationships over leaving concepts isolated.
+Only create relationships when supported by direct evidence.
+Do not invent links.
 
 ### Strict Guardrails
 - **Never invent values**: You must never extract or project a value that is not explicitly stated.
@@ -161,6 +167,122 @@ Your task is to analyze the user's latest message, recent conversation history, 
 - **Never infer personality**: Do not make personality or psychological profile assumptions.
 - **Never infer emotions**: Do not infer emotional states, feelings, or temporary sentiments.
 - **Never infer values unless explicitly stated**: Do not assume any core beliefs, morals, or guiding principles unless the user explicitly defines them.
+
+### Relationship Extraction Guidelines
+Your primary objective is to build a connected Understanding Graph rather than a collection of isolated concepts.
+Follow this reasoning process every time:
+STEP 1 — Identify Concepts
+Extract every concept explicitly stated or strongly supported by the conversation.
+For every concept:
+• Search the current Understanding Graph.
+• If the concept already exists (even with minor wording differences), DO NOT create another node.
+• Instead, reference the existing node by its current ID.
+• Only create a new node if the concept truly does not exist.
+Examples:
+
+Existing:
+Python (skill)
+User:
+"I love Python."
+Result:
+No new node.
+-------------------------
+Existing:
+Become an AI Engineer (goal)
+User:
+"I still want to become an AI Engineer."
+Result:
+Reuse the existing goal.
+-------------------------
+STEP 2 — Discover Relationships
+After determining all nodes (existing and new), compare every relevant pair.
+Whenever the user's latest message or recent conversation provides evidence that two concepts are related, propose that relationship.
+Prefer creating meaningful relationships over leaving nodes isolated.
+A connected graph is almost always more valuable than disconnected concepts.
+Only create relationships directly supported by evidence.
+Never invent relationships.
+-------------------------
+STEP 3 — Relationship Rules
+Relationships may connect:
+• Existing → Existing
+• Existing → New
+• New → Existing
+• New → New
+If a node already exists, always use its existing ID.
+If a node is newly proposed and has no ID yet, use its exact proposed name as source_id or target_id.
+The Coordinator will resolve it automatically.
+-------------------------
+Relationship Types
+Use ONLY these relationship types:
+supports
+requires
+motivates
+influences
+strengthens
+Choose the single most appropriate relationship.
+-------------------------
+Examples
+
+Example 1
+Existing Graph
+Python (skill)
+User
+"I want to become an AI Engineer."
+Return
+proposed_nodes
+Goal:
+Become an AI Engineer
+proposed_relationships
+Python
+supports
+Become an AI Engineer
+-------------------------
+Example 2
+
+Existing Graph
+Python
+Machine Learning
+Become an AI Engineer
+User
+"Python and Machine Learning are helping me become an AI Engineer."
+Return
+No new nodes.
+Relationships
+Python → supports → Become an AI Engineer
+Machine Learning → supports → Become an AI Engineer
+-------------------------
+Example 3
+
+Existing Graph
+Reading
+Python
+User
+"Reading programming books helped me improve my Python."
+Return
+Reading → supports → Python
+-------------------------
+Example 4
+
+Existing Graph
+Become an AI Engineer
+User
+"I'm learning Deep Learning."
+Return
+New node
+Deep Learning
+Relationship
+Become an AI Engineer
+requires
+Deep Learning
+-------------------------
+Final Priority Order
+
+Always follow this priority:
+1. Reuse existing nodes whenever possible.
+2. Create new nodes only when necessary.
+3. Discover every evidence-supported relationship.
+4. Avoid isolated nodes whenever a valid relationship exists.
+5. Return an empty relationship list ONLY when absolutely no evidence-supported relationship can be inferred.
 """
 
     def __init__(
@@ -307,6 +429,75 @@ Never return relationship objects containing only:
 
 Never omit source_id or target_id.
 
+Example:
+
+User says:
+"I want to become an AI Engineer, so I'm learning Python."
+
+Expected output:
+
+{{
+  "proposed_nodes": [
+    {{
+      "id": null,
+      "type": "goal",
+      "name": "Become an AI Engineer",
+      "description": "The user wants to become an AI Engineer.",
+      "evidence_quote": "I want to become an AI Engineer"
+    }},
+    {{
+      "id": null,
+      "type": "skill",
+      "name": "Python",
+      "description": "The user is learning Python.",
+      "evidence_quote": "I'm learning Python"
+    }}
+  ],
+  "proposed_relationships": [
+    {{
+      "source_id": "Become an AI Engineer",
+      "target_id": "Python",
+      "type": "requires",
+      "evidence_quote": "I want to become an AI Engineer, so I'm learning Python."
+    }}
+  ],
+  "reasoning": "",
+  "confidence": 0.95,
+  "uncertainties": [],
+  "contradictions": []
+}}
+
+Existing graph:
+
+Python (skill)
+
+Latest user message:
+
+"I want to become an AI Engineer."
+
+Expected output:
+
+{{
+  "proposed_nodes":[
+    {{
+      "id":null,
+      "type":"goal",
+      "name":"Become an AI Engineer",
+      "description":"...",
+      "evidence_quote":"I want to become an AI Engineer"
+    }}
+  ],
+
+  "proposed_relationships":[
+    {{
+      "source_id":"Python",
+      "target_id":"Become an AI Engineer",
+      "type":"supports",
+      "evidence_quote":"I want to become an AI Engineer"
+    }}
+  ]
+}}
+
 Return only JSON.
 No markdown.
 No explanation.
@@ -335,8 +526,11 @@ No explanation.
         # Enforce validation boundary checks
         self._validate_inputs(session_id, user_message, history, current_graph_json)
 
-        prompt = self._build_prompt(user_message, history, current_graph_json)
-        history=history[-20:]
+        prompt = self._build_prompt(
+            user_message,
+            history[-8:],
+            current_graph_json
+        )
         prompt_size = len(prompt)
 
         logger.info(
