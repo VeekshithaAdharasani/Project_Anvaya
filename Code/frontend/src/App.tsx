@@ -20,7 +20,6 @@ interface ExtendedGraphPayload extends GraphPayload {
     reflection?: string;
     summary?: string;
     discovery?: string;
-    questions?: string[] | QuestionItem[]; // Curiosity prompts
 }
 
 function App() {
@@ -57,11 +56,8 @@ function App() {
     const loadGraph = useCallback(async () => {
         setLoading(true);
         try {
-            const payload = (await fetchGraph(sessionId)) as any;
-            const rawNodes =
-                payload.nodes ??
-                payload.graph?.nodes ??
-                [];
+            const payload = (await fetchGraph(sessionId)) as ExtendedGraphPayload;
+            const rawNodes = payload.nodes ?? [];
 
             setNodes(
                 rawNodes.map((node: any, index: number) => ({
@@ -83,12 +79,7 @@ function App() {
                     },
                 }))
             );
-            const rawEdges =
-                payload.relationships ??
-                payload.edges ??
-                payload.graph?.relationships ??
-                payload.graph?.edges ??
-                [];
+            const rawEdges = payload.edges ?? [];
 
             setEdges(
                 rawEdges.map((edge: any) => ({
@@ -110,13 +101,21 @@ function App() {
             setDiscoveryText(reflection || "I'm still reflecting on your journey.");
 
             // Normalize and parse Curiosity Agent responses (strings or structured maps)
-            const rawQuestions = payload.questions || [];
-            const normalizedQuestions: QuestionItem[] = rawQuestions.map((q, idx) => {
-                if (typeof q === 'string') {
-                    return { id: `q-${idx}`, text: q };
+            const rawQuestions =
+                (payload.questions as (string | QuestionItem)[]) || [];
+            const normalizedQuestions: QuestionItem[] = rawQuestions.map(
+                (q: string | QuestionItem, idx: number): QuestionItem => {
+                    if (typeof q === "string") {
+                        return {
+                            id: `q-${idx}`,
+                            text: q,
+                        };
+                    }
+
+                    return q;
                 }
-                return q;
-            });
+            );
+
             setQuestions(normalizedQuestions);
 
         } catch (error) {

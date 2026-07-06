@@ -1,16 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import ReactFlow, {
-    Background,
-    Controls,
-    MiniMap,
-    ReactFlowProvider,
-    useReactFlow,
-    Handle,
-    Position,
-    MarkerType,
-    type Edge,
-    type Node,
-} from 'reactflow';
+  Background,
+  Controls,
+  MiniMap,
+  ReactFlowProvider,
+  useReactFlow,
+  Handle,
+  Position,
+  MarkerType,
+  type Edge,
+  type Node,
+  type NodeTypes,
+  type NodeProps,
+} from "reactflow";
 import 'reactflow/dist/style.css';
 import '../styles/graph.css';
 
@@ -132,7 +134,7 @@ const getCategoryIcon = (category: string) => {
 // CUSTOM PREMIUM NODE COMPONENT
 // ==========================================
 
-const AnvayaNodeComponent: React.FC<{ data: any; selected?: boolean }> = ({ data, selected }) => {
+const AnvayaNodeComponent: React.FC<NodeProps> = ({ data, selected }) => {
     const rawCategory = data.category || data.type || '';
     const categoryStr = rawCategory.toString().trim();
     
@@ -180,9 +182,12 @@ const GraphViewInner: React.FC<GraphViewProps> = ({
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
     // Register our custom Premium Card Node as the default type
-    const nodeTypes = useMemo(() => ({
-        default: AnvayaNodeComponent,
-    }), []);
+    const nodeTypes: NodeTypes = useMemo(
+        () => ({
+            default: AnvayaNodeComponent,
+        }),
+        []
+    );
 
     // Selection Network: Calculate connected node and edge IDs dynamically
     const connectedNodeIds = useMemo(() => {
