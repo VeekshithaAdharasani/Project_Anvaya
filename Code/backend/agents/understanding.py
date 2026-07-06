@@ -77,6 +77,30 @@ class ProposedRelationship(BaseModel):
         ...,
         description="The exact verbatim quote from the user's latest message or recent history that justifies this relationship.",
     )
+
+class ProposedUncertainty(BaseModel):
+    """Pydantic representation of an ambiguous or uncertain concept requiring clarification."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    target_reference: Optional[str] = Field(
+        None,
+        alias="target_ref",
+        description="The ID of an existing node/relationship, or the temporary name of a newly proposed concept that is uncertain.",
+    )
+
+    uncertainty_reason: str = Field(
+        ...,
+        alias="reason",
+        description="The reason why this concept, node, or relationship is currently uncertain or ambiguous.",
+    )
+
+    clarification_question: Optional[str] = Field(
+        None,
+        alias="suggested_question",
+        description="A thoughtful, warm, and natural question to ask the user to help clarify this uncertainty.",
+    )
+
 class UnderstandingProposal(BaseModel):
     """Structured extraction proposal representing parsed concepts and connections."""
     proposed_nodes: list[ProposedNode] = Field(
@@ -97,9 +121,9 @@ class UnderstandingProposal(BaseModel):
         le=1.0,
         description="Confidence score between 0.0 and 1.0.",
     )
-    uncertainties: list[str] = Field(
+    uncertainties: list[ProposedUncertainty] = Field(
         default_factory=list,
-        description="Uncertain or ambiguous concepts extracted that require clarification.",
+        description="Structured list of ambiguous or uncertain concepts extracted that require clarification.",
     )
     contradictions: list[str] = Field(
         default_factory=list,
@@ -128,7 +152,7 @@ class UnderstandingAgent:
 
     # Embedded system prompt representing the core configuration and instructions
     DEFAULT_SYSTEM_INSTRUCTION: str = """You are the core parser for the Understanding Layer of Project ANVAYA.
-Your task is to analyze the user's latest message, recent conversation history, and the current state of their Understanding Graph. You must extract any new or evolving aspects of the user's personal growth, goals, and skills.
+Your task is to analyze the user's latest message, recent conversation history, and the current state of their Understanding Graph to extract any new or evolving aspects of their personal growth, goals, and skills.
 
 ### Core Concepts to Extract (Node Types)
 1. **dream**: Long-term life aspirations (e.g., "Become a Senior Researcher").
@@ -153,12 +177,13 @@ Your task is to analyze the user's latest message, recent conversation history, 
 3. **Naming**: Keep names concise, capitalized, and noun-focused (e.g., use 'Machine Learning' instead of 'I like machine learning').
 4. **Context**: Use the description field to explain the context of why this node or relationship is relevant to the user.
 5. **No Hallucinations**: Only extract information explicitly mentioned or strongly implied by the text.
-6. Relationship Discovery:
-After extracting new concepts, compare them with every existing node in the Understanding Graph.
-If the user's latest message or recent conversation explicitly indicates that two concepts are related, propose a relationship.
-Prefer creating meaningful relationships over leaving concepts isolated.
-Only create relationships when supported by direct evidence.
-Do not invent links.
+6. **Relationship Discovery**:
+After identifying concepts, audit the current Understanding Graph and compare newly proposed concepts with existing ones. Propose relationships when supported by explicit conversation evidence using these rules:
+- **Motivational Anchoring**: Connect newly proposed skills, interests, or projects to existing long-term goals or dreams if the conversation indicates they support or drive them.
+- **Instrumental Mapping**: Connect practical tools, skills, or tasks to the active projects or objectives they directly aid or require.
+- **Comfort with Ambiguity**: While a connected graph is preferred, you must leave a concept temporarily independent (unconnected) if direct lexical or conversational evidence is lacking. Never speculate or create forced, hypothetical relationships.
+- **Relationship Confidence**: If multiple relationships are equally plausible but the conversation does not clearly establish which one is correct, do not choose one arbitrarily. Leave the concept temporarily unconnected and record an uncertainty instead. Future conversations may provide enough evidence to establish the relationship.
+- **No Duplicates**: Only propose new relationships. Do not propose relationships that are already explicitly defined as links in the provided graph JSON.
 
 ### Strict Guardrails
 - **Never invent values**: You must never extract or project a value that is not explicitly stated.
@@ -169,7 +194,7 @@ Do not invent links.
 - **Never infer values unless explicitly stated**: Do not assume any core beliefs, morals, or guiding principles unless the user explicitly defines them.
 
 ### Relationship Extraction Guidelines
-Your primary objective is to build a connected Understanding Graph rather than a collection of isolated concepts.
+Your primary objective is to propose a connected Target Understanding Graph rather than a collection of isolated concepts.
 Follow this reasoning process every time:
 STEP 1 — Identify Concepts
 Extract every concept explicitly stated or strongly supported by the conversation.
@@ -178,30 +203,14 @@ For every concept:
 • If the concept already exists (even with minor wording differences), DO NOT create another node.
 • Instead, reference the existing node by its current ID.
 • Only create a new node if the concept truly does not exist.
-Examples:
 
-Existing:
-Python (skill)
-User:
-"I love Python."
-Result:
-No new node.
--------------------------
-Existing:
-Become an AI Engineer (goal)
-User:
-"I still want to become an AI Engineer."
-Result:
-Reuse the existing goal.
--------------------------
 STEP 2 — Discover Relationships
-After determining all nodes (existing and new), compare every relevant pair.
+After determining all target nodes, compare every relevant pair.
 Whenever the user's latest message or recent conversation provides evidence that two concepts are related, propose that relationship.
-Prefer creating meaningful relationships over leaving nodes isolated.
-A connected graph is almost always more valuable than disconnected concepts.
-Only create relationships directly supported by evidence.
+Prefer creating meaningful, evidence-backed connections over leaving nodes isolated.
+Only create relationships directly supported by explicit conversation evidence.
 Never invent relationships.
--------------------------
+
 STEP 3 — Relationship Rules
 Relationships may connect:
 • Existing → Existing
@@ -211,78 +220,7 @@ Relationships may connect:
 If a node already exists, always use its existing ID.
 If a node is newly proposed and has no ID yet, use its exact proposed name as source_id or target_id.
 The Coordinator will resolve it automatically.
--------------------------
-Relationship Types
-Use ONLY these relationship types:
-supports
-requires
-motivates
-influences
-strengthens
-Choose the single most appropriate relationship.
--------------------------
-Examples
-
-Example 1
-Existing Graph
-Python (skill)
-User
-"I want to become an AI Engineer."
-Return
-proposed_nodes
-Goal:
-Become an AI Engineer
-proposed_relationships
-Python
-supports
-Become an AI Engineer
--------------------------
-Example 2
-
-Existing Graph
-Python
-Machine Learning
-Become an AI Engineer
-User
-"Python and Machine Learning are helping me become an AI Engineer."
-Return
-No new nodes.
-Relationships
-Python → supports → Become an AI Engineer
-Machine Learning → supports → Become an AI Engineer
--------------------------
-Example 3
-
-Existing Graph
-Reading
-Python
-User
-"Reading programming books helped me improve my Python."
-Return
-Reading → supports → Python
--------------------------
-Example 4
-
-Existing Graph
-Become an AI Engineer
-User
-"I'm learning Deep Learning."
-Return
-New node
-Deep Learning
-Relationship
-Become an AI Engineer
-requires
-Deep Learning
--------------------------
-Final Priority Order
-
-Always follow this priority:
-1. Reuse existing nodes whenever possible.
-2. Create new nodes only when necessary.
-3. Discover every evidence-supported relationship.
-4. Avoid isolated nodes whenever a valid relationship exists.
-5. Return an empty relationship list ONLY when absolutely no evidence-supported relationship can be inferred.
+Do not propose any relationship that is already defined in the provided graph JSON.
 """
 
     def __init__(
@@ -360,7 +298,51 @@ Always follow this priority:
             raise ValueError(
                 f"Validation Error: 'current_graph_json' is not valid JSON. Parse Exception: {e}"
             )
+    def _serialize_reference_graph(self, current_graph_json: str) -> str:
+        """
+        Parses the full graph JSON and serializes it into a highly compact,
+        metadata-stripped reference format to prevent schema leakage and optimize context.
+        """
+        try:
+            full_graph = json.loads(current_graph_json)
+        except json.JSONDecodeError:
+            # Fallback gracefully if raw string cannot be parsed as JSON
+            return f"<reference_graph>\n{current_graph_json}\n</reference_graph>"
 
+        sanitized_nodes = []
+        raw_nodes = full_graph.get("nodes", []) if isinstance(full_graph, dict) else full_graph
+        if isinstance(raw_nodes, list):
+            for node in raw_nodes:
+                if not isinstance(node, dict):
+                    continue
+                # Retain only standard properties needed for matching and reference
+                sanitized_nodes.append({
+                    "id": node.get("id"),
+                    "type": node.get("type") or node.get("node_type"),
+                    "name": node.get("name") or node.get("label"),
+                    "description": node.get("description") or ""
+                })
+
+        sanitized_edges = []
+        raw_edges = full_graph.get("edges", []) if isinstance(full_graph, dict) else []
+        if isinstance(raw_edges, list):
+            for edge in raw_edges:
+                if not isinstance(edge, dict):
+                    continue
+                # Retain only core connectivity properties
+                sanitized_edges.append({
+                    "source_id": edge.get("source_id") or edge.get("source"),
+                    "target_id": edge.get("target_id") or edge.get("target"),
+                    "type": edge.get("type") or edge.get("relationship_type")
+                })
+
+        compact_graph = {
+            "nodes": sanitized_nodes,
+            "edges": sanitized_edges
+        }
+
+        # Wrap cleanly in XML tags to establish strong attention boundaries
+        return f"<reference_graph>\n{json.dumps(compact_graph, indent=2)}\n</reference_graph>"
     def _build_prompt(
         self,
         user_message: str,
@@ -372,70 +354,66 @@ Always follow this priority:
             for msg in history
         )
         
+        # Sanitize and wrap the reference graph cleanly
+        sanitized_graph = self._serialize_reference_graph(current_graph_json)
+        
         return f"""
-### Current Understanding Graph
+### 1. REFERENCE DATA
 
-{current_graph_json}
+[CURRENT GRAPH STATE]
+{sanitized_graph}
 
-### Recent Conversation
-
+[CONVERSATION HISTORY]
 {history_str}
 
-### Latest User Message
-
+[LATEST USER MESSAGE]
 {user_message}
 
-### Instructions
+### 2. STRICT INSTRUCTIONS
 
-Return ONLY valid JSON.
+1. The Current Graph State inside <reference_graph> is for REFERENCE ONLY. NEVER copy its fields (such as validation_status, created_at, updated_at, evidence, or confidence) into your output JSON.
+2. Every proposed node and relationship MUST contain an "evidence_quote" containing a verbatim substring from the conversation.
+3. Use the exact JSON schema provided below. Do not invent, include, or duplicate fields.
+4. If you cannot populate a required field from explicit conversational evidence, return an empty array instead of inventing values or omitting required fields.
+### 3. REQUIRED OUTPUT SCHEMA
 
-The JSON MUST exactly match this structure:
-
+Return ONLY valid JSON matching this exact structure:
 {{
   "proposed_nodes": [
     {{
       "id": null,
       "type": "dream",
-      "name": "...",
-      "description": "...",
-      "evidence_quote": "..."
+      "name": "short reusable concept (1-4 words)",
+      "description": "complete meaning from the user's statement",
+      "evidence_quote": "verbatim quote"
     }}
   ],
   "proposed_relationships": [
     {{
-      "source_id": "...",
-      "target_id": "...",
+      "source_id": "existing ID or new node name",
+      "target_id": "existing ID or new node name",
       "type": "supports",
-      "evidence_quote": "..."
+      "evidence_quote": "verbatim quote"
     }}
   ],
-  "reasoning": "",
-  "confidence": 0.0,
-  "uncertainties": [],
-  "contradictions": []
+  "reasoning": "explanation of extraction decisions",
+  "confidence": 0.9,
+  "uncertainties": [
+    {{
+      "target_ref": "node name or ID",
+      "reason": "explanation of ambiguity",
+      "suggested_question": "optional warm clarification question"
+    }}
+  ],
+  "contradictions": [
+    "verbatim description of a detected statement gap or conflict"
+  ]
 }}
 
-IMPORTANT:
+### 4. EXTRACTION EXAMPLE
 
-Every relationship MUST contain:
-- source_id
-- target_id
-- type
-- evidence_quote
-
-Never return relationship objects containing only:
-- id
-- type
-
-Never omit source_id or target_id.
-
-Example:
-
-User says:
-"I want to become an AI Engineer, so I'm learning Python."
-
-Expected output:
-
+User: "I want to become an AI Engineer, so I'm learning Python."
+Output:
 {{
   "proposed_nodes": [
     {{
@@ -455,54 +433,61 @@ Expected output:
   ],
   "proposed_relationships": [
     {{
-      "source_id": "Become an AI Engineer",
-      "target_id": "Python",
-      "type": "requires",
+      "source_id": "Python",
+      "target_id": "Become an AI Engineer",
+      "type": "supports",
       "evidence_quote": "I want to become an AI Engineer, so I'm learning Python."
     }}
   ],
-  "reasoning": "",
+  "reasoning": "Extracted the new career goal and the supporting skill directly from the user's statement.",
   "confidence": 0.95,
   "uncertainties": [],
   "contradictions": []
 }}
 
-Existing graph:
+Return ONLY raw JSON. No markdown wrappers, no conversational text.
 
-Python (skill)
+### 2.5 NODE NAMING RULES (VERY IMPORTANT)
 
-Latest user message:
+Node names must be short, reusable concepts.
 
-"I want to become an AI Engineer."
+GOOD:
+- AI Engineer
+- Machine Learning
+- Python
+- FastAPI
+- Computer Science
+- Public Speaking
+- Research
+- Robotics
 
-Expected output:
+BAD:
+- Become an AI Engineer who builds intelligent systems that truly understand people.
+- I want to learn FastAPI for backend development.
+- I love solving coding problems.
+
+Descriptions may contain the user's full meaning.
+
+Example:
+
+User:
+"My dream is to become an AI Engineer who builds intelligent systems that truly understand people."
+
+Return:
 
 {{
-  "proposed_nodes":[
-    {{
-      "id":null,
-      "type":"goal",
-      "name":"Become an AI Engineer",
-      "description":"...",
-      "evidence_quote":"I want to become an AI Engineer"
-    }}
-  ],
-
-  "proposed_relationships":[
-    {{
-      "source_id":"Python",
-      "target_id":"Become an AI Engineer",
-      "type":"supports",
-      "evidence_quote":"I want to become an AI Engineer"
-    }}
-  ]
+  "type": "dream",
+  "name": "AI Engineer",
+  "description": "Become an AI Engineer who builds intelligent systems that truly understand people."
 }}
 
-Return only JSON.
-No markdown.
-No explanation.
-"""
+Never use complete sentences as node names.
 
+Node names should usually contain 1-4 words.
+
+Store details inside the description, not inside the node name.
+"""
+    
     def analyze_conversation(
         self,
         session_id: str,
@@ -551,13 +536,14 @@ No explanation.
             rel_cnt = len(proposal.proposed_relationships)
 
             logger.info(
-                "Session=%s History=%d Prompt=%d chars Graph=%d chars",
+                "Session=%s Nodes=%d Relationships=%d History=%d Prompt=%d chars Graph=%d chars",
                 session_id,
+                node_cnt,
+                rel_cnt,
                 len(history),
                 prompt_size,
                 len(current_graph_json),
             )
-
             return proposal
 
         except Exception:

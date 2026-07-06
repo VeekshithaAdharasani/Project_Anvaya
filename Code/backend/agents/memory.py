@@ -26,8 +26,8 @@ class MemoryAgent:
         Initializes the MemoryAgent and sets up the underlying database schema.
         """
         self.db_path: Path = Path(db_path)
+        print("Memory DB:", self.db_path.resolve())
         self._initialize_db()
-
     def _get_connection(self) -> sqlite3.Connection:
         """
         Establishes and configures a SQLite connection.

@@ -11,12 +11,16 @@
 /* Polished Header Styles */
 .journal-header {
   border-bottom: 1px solid var(--border-color);
-  padding-bottom: 2rem;
+  padding-bottom: -1rem;
+
   display: flex;
   flex-direction: column;
+  align-items: center;      /* Centers horizontally */
+  justify-content: center;
+  text-align: center;       /* Centers text */
+
   gap: 0.5rem;
 }
-
 .journal-header-badge {
   font-family: var(--font-sans);
   font-weight: 500;
@@ -30,7 +34,7 @@
 .journal-logo {
   font-family: var(--font-serif);
   font-weight: 400; /* Lighter weight for premium editorial feel */
-  font-size: 3rem;
+  font-size: 4rem;
   letter-spacing: -0.01em;
   color: var(--text-color);
   line-height: 1;
@@ -39,7 +43,7 @@
 .journal-subtitle {
   font-family: var(--font-serif);
   font-style: italic;
-  font-size: 1.15rem;
+  font-size: 1.5rem;
   color: var(--muted-color);
   margin-top: 0.25rem;
 }

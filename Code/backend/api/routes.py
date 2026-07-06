@@ -22,6 +22,9 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     response: str = Field(..., description="The personalized agent response")
+    graph: dict[str, Any]
+    discovery: Optional[dict[str, Any]] = None
+    story_event: Optional[dict[str, Any]] = None
 
 
 class NodeEditRequest(BaseModel):
@@ -60,10 +63,12 @@ async def chat(request: Request, payload: ChatRequest):
     """Processes a user message through the ANVAYA multi-agent pipeline."""
     coordinator = request.app.state.coordinator
     try:
-        response_text = coordinator.process_message(
-            session_id=payload.session_id, user_message=payload.message
+        result = coordinator.process_message(
+            session_id=payload.session_id,
+            user_message=payload.message,
         )
-        return ChatResponse(response=response_text)
+
+        return ChatResponse(**result)
     except Exception as e:
         logger_err = request.app.state.logger
         logger_err.error(f"Error in /chat endpoint: {e}", exc_info=True)

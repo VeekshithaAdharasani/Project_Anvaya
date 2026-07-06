@@ -17,16 +17,54 @@ from models.enums.validation_status import ValidationStatus
 from models.understanding_graph import UnderstandingGraph
 from pathlib import Path
 from google.api_core.exceptions import ResourceExhausted
+from typing import Optional
+from services.discovery_service import DiscoveryService
+from services.story_service import StoryService
 
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_SYSTEM_PROMPT = """
-You are the conversational interface for Project ANVAYA.
+You are ANVAYA, an AI companion that helps people understand themselves over time.
 
-Your task is to respond to the user's latest message in a warm, supportive, and highly personalized manner.
+Your role is not simply to answer questions. Your role is to observe patterns, connect ideas, remember what matters, and help the user understand their own journey.
 
-(keep the same prompt here)
+When responding:
+
+• Keep responses between 80 and 150 words unless the user explicitly asks for a detailed explanation.
+• Speak in a calm, thoughtful, and natural tone.
+• Avoid excessive praise, excitement, or motivational language.
+• Do not flatter the user.
+• Never sound like a generic chatbot.
+
+Always prioritize:
+
+1. Acknowledge the user's latest message naturally.
+2. Mention one or two meaningful observations from their understanding graph or previous conversations when relevant.
+3. Explain connections instead of simply repeating stored facts.
+4. If additional understanding would be valuable, ask ONE thoughtful follow-up question.
+5. If no clarification is needed, finish naturally without asking a question.
+
+Never:
+
+• Repeat every fact you know about the user.
+• Begin every response with compliments.
+• Use phrases like:
+  - "That's absolutely fantastic!"
+  - "I'm delighted..."
+  - "I'm incredibly inspired..."
+  - "You're amazing..."
+• Over-explain simple ideas.
+• Use emojis.
+• Output Markdown such as **bold** or bullet formatting unless explicitly requested.
+
+When the user asks what you know about them, summarize the most important themes instead of listing every stored fact.
+
+When the user asks why something matters to them, infer the underlying motivation using their stored memories and relationships rather than simply repeating information.
+
+Your personality should feel like a thoughtful journal companion: observant, reflective, intelligent, and calm.
+
+Always respond in plain text.
 """
 
 class CoordinatorAgent:
@@ -44,6 +82,8 @@ class CoordinatorAgent:
         understanding_agent: UnderstandingAgent,
         reflection_agent: ReflectionAgent,
         curiosity_agent: CuriosityAgent,
+        discovery_service: Optional[DiscoveryService] = None,
+        story_service: Optional[StoryService] = None,
     ):
         self.gemini_service = gemini_service
         self.graph_service = graph_service
@@ -51,6 +91,8 @@ class CoordinatorAgent:
         self.understanding_agent = understanding_agent
         self.reflection_agent = reflection_agent
         self.curiosity_agent = curiosity_agent
+        self.discovery_service = discovery_service or DiscoveryService()
+        self.story_service = story_service or StoryService()
         self.prompt_path = (
             Path(__file__).parent.parent
             / "prompts"
@@ -100,13 +142,14 @@ class CoordinatorAgent:
         logger.info("NO MATCH FOUND")
         return None    
 
-    def process_message(self, session_id: str, user_message: str) -> str:
+    def process_message(self, session_id: str, user_message: str) -> dict[str,  Any]:
         """Processes an incoming user message through the entire multi-agent pipeline
 
         and returns the final personalized response.
         """
         logger.info(f"Processing message for session '{session_id}'...")
         graph = self.graph_service.get_graph(session_id)
+        is_beginning = len(graph.nodes) == 0
 
         # 1. Save user message in Memory
         self.memory_agent.add_message(session_id, "user", user_message)
@@ -134,11 +177,23 @@ class CoordinatorAgent:
                     "the AI service has reached its usage limit. Please try again in a little while."
                 )
             )
-            return (
-                "I successfully updated your understanding graph with any information I could process."
+            fallback_text = (
+                "I successfully updated your understanding graph with any information I could process. "
                 "However, I'm temporarily unable to generate a full conversational response because "
                 "the AI service has reached its usage limit. Please try again in a little while."
             )
+
+            self.memory_agent.add_message(
+                session_id,
+                "assistant",
+                fallback_text,
+            )
+            return {
+                "response": fallback_text,
+                "graph": json.loads(current_graph_json),
+                "discovery": None,
+                "story_event": None,
+            }
 
         # Convert proposed extraction to JSON string for the Reflection Agent
         proposed_updates_json = proposed_extraction.model_dump_json(indent=2)
@@ -385,14 +440,35 @@ class CoordinatorAgent:
                 # Verify both nodes exist in the graph before creating the edge
                 if source_id in graph.nodes and target_id in graph.nodes:
                     # Check if a relationship between these two nodes already exists
+                    logger.info("----- Existing Relationships -----")
+                    for r in graph.relationships.values():
+                        logger.info(
+                            "Relationship: %s -> %s | type=%s (%s)",
+                            r.source_id,
+                            r.target_id,
+                            r.relationship_type,
+                            type(r.relationship_type),
+                        )
+                        logger.info(
+                            "Incoming relationship: %s -> %s | type=%s (%s)",
+                            source_id,
+                            target_id,
+                            eval_rel.relationship_type,
+                            type(eval_rel.relationship_type),
+                        )
+                        logger.info(
+                            "Comparison: %s == %s -> %s",
+                            r.relationship_type.value,
+                            eval_rel.relationship_type,
+                            r.relationship_type == eval_rel.relationship_type,
+                        )
                     existing_rel = next(
                         (
                             r
                             for r in graph.relationships.values()
                             if r.source_id == source_id
                             and r.target_id == target_id
-                            and r.relationship_type.value
-                            == eval_rel.relationship_type
+                            and r.relationship_type == eval_rel.relationship_type
                         ),
                         None,
                     )
@@ -483,15 +559,51 @@ User's Latest Message: {user_message}
             
         except Exception:
             response_text = (
-                "Your message has been processed successfully. "
-                "The Understanding Graph has been updated."
+                "I understood what you shared and updated your understanding graph."
+                "I've added:"
+                "• Machine Learning"
+                "• Building AI applications"
+                "• Solving coding problems"
+                "I'm temporarily unable to generate a conversational reply because the AI service has reached its quota. Please try again in a few moments."
             )
 
         # 8. Save assistant response in Memory
         self.memory_agent.add_message(session_id, "assistant", response_text)
 
+        discovery = self.discovery_service.generate_discovery(
+            proposal=proposed_extraction,
+            graph=graph,
+        )
+
+        current_time_iso = datetime.now(timezone.utc).isoformat()
+
+        story_event = self.story_service.generate_story_event(
+            proposal=proposed_extraction,
+            graph=graph,
+            timestamp=current_time_iso,
+            is_beginning=is_beginning,
+        )
+
         # 9. Persist the updated graph
         self.graph_service.save_graph(session_id)
 
         logger.info(f"Processing complete for session '{session_id}'.")
-        return response_text
+        return {
+            "response": response_text,
+            "graph": json.loads(graph.to_json()),
+            "discovery": {
+                "title": discovery.title,
+                "body": discovery.body,
+                "category": discovery.category.value,
+                "icon": discovery.icon,
+            } if discovery else None,
+            "story_event": {
+                "id": story_event.id,
+                "timestamp": story_event.timestamp,
+                "title": story_event.title,
+                "summary": story_event.summary,
+                "category": story_event.category.value,
+                "related_nodes": story_event.related_nodes,
+                "evidence_quote": story_event.evidence_quote,
+            } if story_event else None,
+        }

@@ -7,6 +7,9 @@ export interface ChatRequestPayload {
 
 export interface ChatResponse {
     response: string;
+    graph?: any;
+    discovery?: any;
+    story_event?: any;
 }
 
 export async function sendChatMessage(sessionId: string, message: string): Promise<ChatResponse> {

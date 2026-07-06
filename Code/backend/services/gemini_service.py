@@ -8,13 +8,11 @@ import os
 import logging
 import time
 import random
-import threading
-from typing import Any, Type, TypeVar, Optional, Dict, Tuple, Callable, List
+from typing import Any, Type, TypeVar, Optional, Callable
 from dotenv import load_dotenv
 
-import google.generativeai as genai
-from google.generativeai.types import GenerationConfig
-from google.api_core.exceptions import GoogleAPICallError
+from google import genai
+from google.genai import types
 
 # Load environmental variables from local .env file immediately on import
 load_dotenv()
@@ -46,29 +44,22 @@ class GeminiService:
     def __init__(
             self,
             text_model: str = "gemini-2.5-flash",
-            json_model: str = "gemini-2.5-flash-lite",
+            json_model: str = "gemini-2.5-flash",
     ) -> None:
         """
         Initializes the GeminiService, checking for environment keys and setting up cache.
         """
         self.api_key: Optional[str] = os.environ.get("GEMINI_API_KEY")
-        print("API KEY PREFIX:", self.api_key[:12] if self.api_key else "No Key")
         if not self.api_key:
             logger.warning(
                 "GEMINI_API_KEY environment variable is not set. API calls will fail on invocation."
             )
 
-        genai.configure(api_key=self.api_key)
-        print("=" * 80)
-        print("API KEY BEING USED:")
-        print(os.getenv("GEMINI_API_KEY")[:15] + "...")
-        print("=" * 80)
+        self.client = genai.Client(api_key=self.api_key)
         self.text_model = text_model
         self.json_model = json_model
 
         # Thread-safe caching mechanism for GenerativeModel instances
-        self._model_cache: Dict[Tuple[str, Optional[str]], genai.GenerativeModel] = {}
-        self._cache_lock = threading.Lock()
     def _get_masked_api_key(self) -> str:
         """
         Safely formats the API key for logs to avoid accidental secret exposure.
@@ -79,66 +70,24 @@ class GeminiService:
             return "INVALID_KEY_LENGTH"
         return f"{self.api_key[:4]}...{self.api_key[-4:]}"
 
-    def _get_model(
-            self,
-            model_name: str,
-            system_instruction: str | None = None,) -> genai.GenerativeModel:
-        """
-        Retrieves a cached GenerativeModel instance or creates a new one thread-safely.
-        """
-        if not self.api_key:
-            raise GeminiConfigurationError(
-                "GEMINI_API_KEY environment variable is not set. Please set the variable."
-            )
-
-        cache_key = (model_name, system_instruction)
-        
-        # Guard lookup/assignment to ensure thread safety under concurrent ASGI requests
-        with self._cache_lock:
-            if cache_key in self._model_cache:
-                return self._model_cache[cache_key]
-
-            model = genai.GenerativeModel(
-                model_name=model_name,
-                system_instruction=system_instruction,
-            )
-            self._model_cache[cache_key] = model
-            return model
-
     def _execute_with_retry(self, api_call: Callable[[], Any]) -> Any:
-        """
-        Executes a Gemini API action with exponential backoff on transient failure codes.
-        Treats rate limits (429) and server exceptions (500, 503, 504) as retriable.
-        """
         base_delay = 1.5
         factor = 2.0
-
         for attempt in range(self.MAX_RETRIES + 1):
             try:
                 return api_call()
-            except GoogleAPICallError as e:
-                # Resolve the status code representing the error
-                status_code = getattr(e, "code", None)
-                is_transient = status_code in (429, 500, 503, 504)
-
-                if not is_transient or attempt == self.MAX_RETRIES:
-                    logger.exception(
-                        f"Permanent or maximum-retried Google API error occurred (Status: {status_code})."
-                    )
+            except Exception:
+                if attempt == self.MAX_RETRIES:
+                    logger.exception("Maximum retries exceeded.")
                     raise
-
-                # Calculate exponential backoff delay with a random jitter (preventing thundering herds)
                 delay = base_delay * (factor ** attempt) + random.uniform(0.1, 0.4)
+
                 logger.warning(
-                    f"Transient Gemini API failure (Status {status_code}). "
-                    f"Retrying in {delay:.2f} seconds (Attempt {attempt + 1}/{self.MAX_RETRIES})..."
+                    f"Gemini request failed ({attempt + 1}/{self.MAX_RETRIES + 1}). "
+                    f"Retrying in {delay:.2f}s..."
                 )
+
                 time.sleep(delay)
-            except Exception as e:
-                logger.exception(
-                    f"Non-transient exception captured during API processing: {e}"
-                )
-                raise
 
     def generate_text(
         self,
@@ -151,57 +100,30 @@ class GeminiService:
         timeout: float = DEFAULT_TIMEOUT,
     ) -> str:
         """
-        Generates raw text from a prompt, handling caching, retries, and safety validations.
-
-        Raises:
-            ValueError: If the API response contains no valid text.
-
-        Time Complexity: Variable (network bound)
-        Space Complexity: O(1)
+        Generates plain text using the Gemini API.
         """
-        model = self._get_model(
-            self.text_model,
-            system_instruction,
-        )
-
-        config = GenerationConfig(
+        config = types.GenerateContentConfig(
+            system_instruction=system_instruction,
             temperature=temperature,
             top_p=top_p,
             top_k=top_k,
             max_output_tokens=max_output_tokens,
         )
 
-        request_options = {"timeout": timeout}
-
-        def make_call() -> genai.types.GenerateContentResponse:
-            return model.generate_content(
-                prompt,
-                generation_config=config,
-                request_options=request_options,
+        def make_call():
+            return self.client.models.generate_content(
+                model=self.text_model,
+                contents=prompt,
+                config=config,
             )
+
         logger.info("=== GEMINI TEXT CALL ===")
+
         response = self._execute_with_retry(make_call)
 
-        # Validate response candidates to detect safety blocks before accessing response.text
-        if not response or not hasattr(response, "candidates") or not response.candidates:
-            feedback = getattr(response, "prompt_feedback", "No prompt feedback provided.")
-            raise ValueError(
-                f"Gemini API returned an empty response with zero candidates. Feedback: {feedback}"
-            )
-
-        try:
-            text = response.text
-        except ValueError as e:
-            # Handle prompt block/safety exceptions raised during property extraction
-            feedback = getattr(response, "prompt_feedback", "Blocked by safety/recitation settings.")
-            raise ValueError(
-                f"Gemini API generation failed. Text is inaccessible. Feedback: {feedback}"
-            ) from e
-
-        if not text or not text.strip():
-            raise ValueError("Gemini API response text is empty or blank.")
-
-        return text
+        if not response.text:
+            raise ValueError("Gemini returned an empty response.")
+        return response.text
 
     def generate_json(
         self,
@@ -215,84 +137,34 @@ class GeminiService:
         timeout: float = DEFAULT_TIMEOUT,
     ) -> T:
         """
-        Generates structured JSON output conforming to a Pydantic schema.
-
-        Raises:
-            ValueError: If the API response contains no valid text or breaks structural constraint.
-
-        Time Complexity: Variable (network bound)
-        Space Complexity: O(V_schema) representation.
+        Generates structured JSON conforming to the supplied Pydantic schema.
         """
-        model = self._get_model(
-            self.json_model,
-            system_instruction,
-        )
 
-        config = GenerationConfig(
+        config = types.GenerateContentConfig(
+            system_instruction=system_instruction,
             temperature=temperature,
             top_p=top_p,
             top_k=top_k,
             max_output_tokens=max_output_tokens,
             response_mime_type="application/json",
+            response_schema=response_schema,
         )
 
-        request_options = {"timeout": timeout}
-
-        def make_call() -> genai.types.GenerateContentResponse:
-            return model.generate_content(
-                prompt,
-                generation_config=config,
-                request_options=request_options,
+        def make_call():
+            return self.client.models.generate_content(
+                model=self.json_model,
+                contents=prompt,
+                config=config,
             )
+
         logger.info("=== GEMINI JSON CALL ===")
+
         response = self._execute_with_retry(make_call)
 
-        if not response or not hasattr(response, "candidates") or not response.candidates:
-            feedback = getattr(response, "prompt_feedback", "No prompt feedback provided.")
-            raise ValueError(
-                f"Gemini API JSON generation returned an empty response. Feedback: {feedback}"
-            )
+        if response.parsed is None:
+            raise ValueError("Gemini returned no structured JSON.")
 
-        try:
-            text = response.text
-        except ValueError as e:
-            feedback = getattr(response, "prompt_feedback", "Blocked by safety/recitation settings.")
-            raise ValueError(
-                f"Gemini API JSON generation failed. Text is inaccessible. Feedback: {feedback}"
-            ) from e
-
-        if not text or not text.strip():
-            raise ValueError("Gemini API JSON response text is empty or blank.")
-
-        print("\nRAW GEMINI JSON:\n")
-        print(text)
-        print("\nEND RAW JSON\n")
-        import traceback
-        import json
-        try:
-            # Parse Gemini JSON into a Python dict
-            response_json = json.loads(text)
-            print("\nPARSED JSON:\n")
-            print(response_json)
-            # Remove invalid relationships
-            if "proposed_relationships" in response_json:
-                response_json["proposed_relationships"] = [
-                    r
-                    for r in response_json["proposed_relationships"]
-                    if r.get("source_id") and r.get("target_id")
-                ]
-
-            # Validate cleaned JSON
-            obj = response_schema.model_validate(response_json)
-            print("\nVALIDATED OBJECT:\n")
-            print(obj)
-            print("\nRAW JSON FROM GEMINI:\n")
-            print(text)
-            return obj
-        except Exception:
-            print("\nVALIDATION FAILED:\n")
-            traceback.print_exc()
-            raise
+        return response.parsed
 
     def health_check(self) -> bool:
         """

@@ -1,21 +1,26 @@
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
 
 # Environment
 .env
 
-# Database
+# SQLite
 *.db
 *.db-shm
 *.db-wal
 
+# Generated graphs
+Code/backend/data/graphs/*.json
+
 # Node
 node_modules/
-
-# Build
 dist/
-build/
 
-# Logs
-*.log
+# IDE
+.vscode/
+.idea/

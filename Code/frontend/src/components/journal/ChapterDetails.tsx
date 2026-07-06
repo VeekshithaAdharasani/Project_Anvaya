@@ -1,17 +1,44 @@
 import React from 'react';
-import { type GraphViewNode } from '../GraphView';
+import {
+    type GraphViewNode,
+    type GraphViewEdge,
+} from '../GraphView';
 
 interface ChapterDetailsProps {
     selectedNode: GraphViewNode | null;
+    nodes: GraphViewNode[];
+    edges: GraphViewEdge[];
 }
 
-interface MetadataFieldConfig {
-    key: string;
-    label: string;
-    render?: (value: any) => React.ReactNode;
-}
+// Extensible registry mapping categories to storytelling emojis
+const CATEGORY_EMOJIS: Record<string, string> = {
+    goal: '🎯',
+    goals: '🎯',
+    skill: '🧠',
+    skills: '🧠',
+    learning: '🧠',
+    project: '🚀',
+    projects: '🚀',
+    interest: '💖',
+    interests: '💖',
+    value: '💎',
+    values: '💎',
+    trait: '🛡️',
+    traits: '🛡️',
+    dream: '✨',
+    dreams: '✨',
+    motivation: '🔥',
+    motivations: '🔥',
+};
 
-// Helper to extract readable text safely from dynamic objects, strings, or numbers
+const DEFAULT_EMOJI = '📝';
+
+const getEmojiForCategory = (category: string): string => {
+    const key = category.toLowerCase().trim();
+    return CATEGORY_EMOJIS[key] ?? DEFAULT_EMOJI;
+};
+
+// Helper to extract readable text safely from dynamic evidence objects or arrays
 const extractText = (val: any): string => {
     if (val === undefined || val === null) {
         return '';
@@ -23,14 +50,12 @@ const extractText = (val: any): string => {
         return String(val);
     }
     if (typeof val === 'object') {
-        // Prioritized list of keys commonly returning text/message structures
         const targetKeys = ['text', 'message', 'content', 'quote', 'value'];
         for (const key of targetKeys) {
             if (val[key] !== undefined && val[key] !== null) {
                 return String(val[key]);
             }
         }
-        // Fallback: look for the first string-type property inside the object
         const firstStringValue = Object.values(val).find((v) => typeof v === 'string');
         if (firstStringValue) {
             return String(firstStringValue);
@@ -39,95 +64,7 @@ const extractText = (val: any): string => {
     return '';
 };
 
-const METADATA_FIELDS_REGISTRY: MetadataFieldConfig[] = [
-    {
-        key: 'category',
-        label: 'Classification',
-        render: (val) => <span style={{ textTransform: 'capitalize' }}>{String(val)}</span>
-    },
-    {
-        key: 'confidence',
-        label: 'Confidence level',
-        render: (val) => (
-            <span style={{ fontWeight: 600, color: 'var(--primary-color)' }}>
-                {typeof val === 'number' ? `${Math.round(val * 100)}%` : String(val)}
-            </span>
-        )
-    },
-    {
-        key: 'relationships',
-        label: 'Connected Themes',
-        render: (val) => {
-            const items = Array.isArray(val) 
-                ? val 
-                : String(val).split(',').map((item) => item.trim());
-            return (
-                <div className="details-meta-chip-group">
-                    {items.map((item, idx) => (
-                        <span key={idx} className="details-meta-chip">{item}</span>
-                    ))}
-                </div>
-            );
-        }
-    },
-    {
-        key: 'evidence',
-        label: 'Archival Evidence',
-        render: (val) => {
-            if (!val) return null;
-
-            // Helper to clean up redundant enclosing quotes
-            const cleanQuote = (str: string) => {
-                const trimmed = str.trim();
-                if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-                    return trimmed.substring(1, trimmed.length - 1);
-                }
-                if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
-                    return trimmed.substring(1, trimmed.length - 1);
-                }
-                return trimmed;
-            };
-
-            const renderQuoteBlock = (text: string, index?: number) => {
-                const quoteText = cleanQuote(text);
-                if (!quoteText) return null;
-                return (
-                    <blockquote key={index} className="details-meta-quote">
-                        "{quoteText}"
-                    </blockquote>
-                );
-            };
-
-            // Render array elements cleanly as separate blocks
-            if (Array.isArray(val)) {
-                const renderedQuotes = val
-                    .map((item) => extractText(item))
-                    .filter((text) => text.trim().length > 0)
-                    .map((text, idx) => renderQuoteBlock(text, idx));
-
-                return renderedQuotes.length > 0 ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-                        {renderedQuotes}
-                    </div>
-                ) : null;
-            }
-
-            // Render single value extract
-            const extracted = extractText(val);
-            return extracted ? renderQuoteBlock(extracted) : null;
-        }
-    },
-    {
-        key: 'lastUpdated',
-        label: 'Recorded On'
-    },
-    {
-        key: 'source',
-        label: 'Origin Source'
-    }
-];
-
-export const ChapterDetails: React.FC<ChapterDetailsProps> = ({ selectedNode }) => {
+export const ChapterDetails: React.FC<ChapterDetailsProps> = ({ selectedNode, nodes, edges }) => {
     if (!selectedNode) {
         return (
             <div className="journal-card">
@@ -140,7 +77,7 @@ export const ChapterDetails: React.FC<ChapterDetailsProps> = ({ selectedNode }) 
                     </span>
                     <h3 className="journal-card-title">Chapter Details</h3>
                 </div>
-                <p className="journal-card-content">
+                <p className="journal-card-content" style={{ fontStyle: 'italic', color: 'var(--muted-color)' }}>
                     "Select a concept to explore its story, relationships, and growth."
                 </p>
             </div>
@@ -148,45 +85,158 @@ export const ChapterDetails: React.FC<ChapterDetailsProps> = ({ selectedNode }) 
     }
 
     const { label, description, ...extraData } = selectedNode.data || {};
+    const category = String(extraData.type || extraData.category || 'Concept');
+    const conceptEmoji = getEmojiForCategory(category);
 
-    const activeMetadata = METADATA_FIELDS_REGISTRY.filter((field) => {
-        const val = extraData[field.key];
-        return val !== undefined && val !== null && val !== '';
-    });
+    // Filter connected nodes
+    const connectedRelationships = edges.filter(
+        (edge) => edge.source === selectedNode.id || edge.target === selectedNode.id
+    );
+    const connectedConcepts = connectedRelationships.map((edge) => {
+        const otherNodeId = edge.source === selectedNode.id ? edge.target : edge.source;
+        return nodes.find((n) => n.id === otherNodeId);
+    }).filter((n): n is GraphViewNode => n !== undefined);
+
+    const journalSubtitle = `${category.charAt(0).toUpperCase() + category.slice(1).toLowerCase()}`;
+
+    // Clean archival quotes helper
+    const cleanQuote = (str: string) => {
+        const trimmed = str.trim();
+        if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+            return trimmed.substring(1, trimmed.length - 1);
+        }
+        if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
+            return trimmed.substring(1, trimmed.length - 1);
+        }
+        return trimmed;
+    };
+
+    const rawEvidence = extraData.evidence;
+    const hasEvidence = rawEvidence !== undefined && rawEvidence !== null && rawEvidence !== '';
+
+    // Render timeline dates
+    const formatDate = (val: any) => {
+        if (!val) return null;
+        try {
+            return new Date(val).toLocaleDateString(undefined, {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+            });
+        } catch {
+            return String(val);
+        }
+    };
+
+    const firstDiscovered = formatDate(extraData.created_at);
+    const lastRevisited = formatDate(extraData.updated_at || extraData.created_at);
 
     return (
         <div className="journal-card" style={{ height: '100%', cursor: 'default' }}>
             <div className="journal-card-details-wrapper">
-                <div className="details-title-row">
-                    <span className="details-subtitle-type">
-                        {String(extraData.type || extraData.category || 'Concept')}
+                
+                {/* Header Block */}
+                <div className="details-header-divider">
+                    <div className="details-header-title-container">
+                        <span className="details-header-emoji">{conceptEmoji}</span>
+                        <h2 className="details-main-title">
+                            {label || 'Unnamed Chapter'}
+                        </h2>
+                    </div>
+                    <span className="details-header-subtitle">
+                        {journalSubtitle}
                     </span>
-                    <h2 className="details-main-title">{label || 'Unnamed Chapter'}</h2>
                 </div>
 
-                <p className="details-description-block">
-                    {description || (
-                        <span style={{ fontStyle: 'italic', color: 'var(--muted-color)' }}>
-                            An active chapter in your map of understanding. Continue your conversations to deepen details and expand its relationships.
-                        </span>
-                    )}
-                </p>
+                {/* Main Concept Narrative Description */}
+                <div>
+                    <p className="details-paragraph">
+                        {description || "This chapter has no description yet. Continue your conversations to deepen its story as your understanding map evolves."}
+                    </p>
+                </div>
 
-                {activeMetadata.length > 0 && (
-                    <div className="details-meta-grid">
-                        {activeMetadata.map((field) => {
-                            const value = extraData[field.key];
-                            return (
-                                <div key={field.key} className="details-meta-item">
-                                    <span className="details-meta-label">{field.label}</span>
-                                    <div className="details-meta-value">
-                                        {field.render ? field.render(value) : String(value)}
-                                    </div>
-                                </div>
-                            );
-                        })}
+                {/* Narrative Evidence Block (Why I believe this) */}
+                {hasEvidence && (
+                    <div className="details-section-container">
+                        <h4 className="details-section-title">
+                            Why I believe this
+                        </h4>
+                        <p className="details-section-subtitle">
+                            {extraData.validation_status?.toString().toLowerCase() === 'inferred'
+                                ? `I've noticed this theme emerging organically through our conversations.`
+                                : `You shared this directly during our dialogue, emphasizing its importance in your life.`}
+                        </p>
+                        
+                        <div className="details-section-quote-group">
+                            {Array.isArray(rawEvidence) ? (
+                                rawEvidence.map((item, idx) => {
+                                    const text = cleanQuote(extractText(item));
+                                    if (!text) return null;
+                                    return (
+                                        <blockquote key={idx} className="details-meta-quote">
+                                            "{text}"
+                                        </blockquote>
+                                    );
+                                })
+                            ) : (
+                                <blockquote className="details-meta-quote">
+                                    "{cleanQuote(extractText(rawEvidence))}"
+                                </blockquote>
+                            )}
+                        </div>
                     </div>
                 )}
+
+                {/* Reflection Narrative Block */}
+                <div className="details-section-container">
+                    <h4 className="details-section-title">
+                        Reflection
+                    </h4>
+                    <p className="details-reflection-text">
+                        {extraData.reflection || "Reflection will grow as I learn more about this part of your story."}
+                    </p>
+                </div>
+
+                {/* Connected Concepts Section */}
+                {connectedConcepts.length > 0 && (
+                    <div className="details-section-container">
+                        <h4 className="details-section-title">
+                            Connected Chapters
+                        </h4>
+                        <div className="details-connections-group">
+                            {connectedConcepts.map((node, index) => {
+                                const connCat = String(node.data?.category || node.data?.type || '');
+                                const connLabel = String(node.data?.label || 'Concept');
+                                const connEmoji = getEmojiForCategory(connCat);
+                                return (
+                                    <span key={index} className="details-connection-chip">
+                                        <span>{connEmoji}</span>
+                                        <span>{connLabel}</span>
+                                    </span>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+
+                {/* Historical Timeline (Journey) */}
+                {(firstDiscovered || lastRevisited) && (
+                    <div className="details-timeline-container">
+                        {firstDiscovered && (
+                            <div className="details-timeline-item">
+                                <span className="details-timeline-label">First discovered</span>
+                                <span>{firstDiscovered}</span>
+                            </div>
+                        )}
+                        {lastRevisited && (
+                            <div className="details-timeline-item right-align">
+                                <span className="details-timeline-label">Last revisited</span>
+                                <span>{lastRevisited}</span>
+                            </div>
+                        )}
+                    </div>
+                )}
+
             </div>
         </div>
     );

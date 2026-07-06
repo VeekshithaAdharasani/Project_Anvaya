@@ -15,60 +15,266 @@
 
 /* Connective Edges Style */
 .react-flow__edge-path {
-  stroke: #D4A373 !important; /* Soft gold curves */
-  stroke-width: 2px !important;
-  stroke-opacity: 0.45;
+  stroke-width: 2px;
+  stroke-opacity: 0.35;
   transition: stroke-opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1), stroke-width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.react-flow__edge.selected .react-flow__edge-path,
-.react-flow__edge:hover .react-flow__edge-path {
-  stroke-opacity: 0.85;
-  stroke-width: 2.5px !important;
+/* Active Highlight / Selection Edge Interactions */
+.react-flow__edge:hover .react-flow__edge-path,
+.react-flow__edge.anvaya-edge-connected .react-flow__edge-path {
+  stroke-opacity: 0.95 !important;
+  stroke-width: 2.8px !important;
 }
 
-/* Base Node Customization (.anvaya-node is added dynamically in the component) */
+.react-flow__edge.anvaya-edge-faded .react-flow__edge-path {
+  stroke-opacity: 0.06 !important;
+}
+
+/* Base Custom React Flow Node Override */
 .react-flow__node.anvaya-node {
-  background-color: var(--card-bg-color) !important;
-  border: 1px solid var(--border-color) !important;
-  border-radius: 12px !important;
-  box-shadow: 0 4px 14px rgba(212, 163, 115, 0.05) !important;
-  padding: 12px 18px !important;
-  color: var(--text-color) !important;
-  font-family: var(--font-sans) !important;
-  font-size: 0.875rem !important;
-  font-weight: 500 !important;
-  text-align: left !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  cursor: pointer;
+  transition: opacity 0.25s ease !important;
+}
+
+/* Fading mechanics when another node is selected */
+.react-flow__node.anvaya-node-faded {
+  opacity: 0.24 !important;
+}
+
+/* Highlight border and outer glow for connected nodes */
+.react-flow__node.anvaya-node-connected .anvaya-node-card-body {
+  border-color: rgba(212, 163, 115, 0.4) !important;
+  box-shadow: 0 4px 16px rgba(212, 163, 115, 0.08) !important;
+}
+
+/* Custom Card Body Container (Optimized for Height) */
+.anvaya-node-card-body {
+  display: flex;
+  align-items: center;
+  background-color: var(--card-bg-color);
+  border: 1.2px solid var(--border-color);
+  border-radius: 12px;
+  padding: 6px 12px; /* Slimmer compact padding */
+  min-width: 175px;
+  gap: 10px;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.02);
   transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), 
               box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1), 
-              border-color 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
-  border-left: 4px solid var(--border-color) !important; /* Fallback default left accent */
+              border-color 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  border-left-width: 5px !important; /* Thick semantic color strip on left */
 }
 
-/* Node Hover Interactions */
-.react-flow__node.anvaya-node:hover {
-  transform: translateY(-2px) scale(1.01);
+/* Hover and active card transformations */
+.react-flow__node.anvaya-node:hover .anvaya-node-card-body {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(212, 163, 115, 0.12) !important;
+}
+
+/* Selected Node Outer Border Glow and Highlight */
+.react-flow__node.anvaya-node.selected .anvaya-node-card-body {
   border-color: var(--accent-color) !important;
-  box-shadow: 0 8px 24px rgba(212, 163, 115, 0.12) !important;
-  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(212, 163, 115, 0.18) !important;
 }
 
-/* Selected Node Indicator */
-.react-flow__node.anvaya-node.selected {
-  border-color: var(--accent-color) !important;
-  outline: none !important;
-  box-shadow: 0 10px 28px rgba(212, 163, 115, 0.18) !important;
+/* Details Panel Layout inside Card */
+.anvaya-node-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
 }
 
-/* --- Category Accents (Subtle Left Accent Tab Style) --- */
-.react-flow__node.anvaya-node-skills { border-left-color: #7C5CFC !important; }        /* Indigo */
-.react-flow__node.anvaya-node-goals { border-left-color: #82C99B !important; }         /* Sage Green */
-.react-flow__node.anvaya-node-interests { border-left-color: #F0A5C2 !important; }     /* Soft Rose */
-.react-flow__node.anvaya-node-values { border-left-color: #D4A373 !important; }        /* Gold Amber */
-.react-flow__node.anvaya-node-dreams { border-left-color: #B298FC !important; }        /* Muted Lavender */
-.react-flow__node.anvaya-node-learning { border-left-color: #6CA6CD !important; }      /* Library Blue */
-.react-flow__node.anvaya-node-motivations { border-left-color: #E29B7A !important; }   /* Soft Terracotta */
-.react-flow__node.anvaya-node-confidence { border-left-color: #62C1B5 !important; }    /* Pale Teal */
+.anvaya-node-title {
+  font-family: var(--font-sans);
+  font-size: 0.825rem;
+  font-weight: 600;
+  color: #1c1917; /* Slate dark slate */
+  line-height: 1.25;
+  text-align: left;
+}
+
+.anvaya-node-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+}
+
+/* Category pills inside custom nodes */
+.anvaya-node-category-pill {
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: capitalize;
+  letter-spacing: 0.02em;
+}
+
+/* Left Circular Icon wraps */
+.anvaya-node-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px; /* Optimized smaller icon circle */
+  height: 26px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* --- Category Themes (Supports both Singular and Plural formats) --- */
+
+/* Skills & Learning (Indigo Theme) */
+.anvaya-node-skills .anvaya-node-card-body,
+.anvaya-node-skill .anvaya-node-card-body,
+.anvaya-node-learning .anvaya-node-card-body {
+  border-left-color: #7C5CFC !important;
+  background-color: #F8F6FF !important;
+}
+.anvaya-node-icon-skills,
+.anvaya-node-icon-skill,
+.anvaya-node-icon-learning {
+  background-color: #EFECFE;
+  color: #7C5CFC;
+}
+.anvaya-category-pill-skills,
+.anvaya-category-pill-skill,
+.anvaya-category-pill-learning {
+  background-color: #EFECFE;
+  color: #7C5CFC;
+}
+
+/* Goals (Sage Green Theme) */
+.anvaya-node-goals .anvaya-node-card-body,
+.anvaya-node-goal .anvaya-node-card-body {
+  border-left-color: #82C99B !important;
+  background-color: #F5FAF7 !important;
+}
+.anvaya-node-icon-goals,
+.anvaya-node-icon-goal {
+  background-color: #E2F5EA;
+  color: #82C99B;
+}
+.anvaya-category-pill-goals,
+.anvaya-category-pill-goal {
+  background-color: #E2F5EA;
+  color: #82C99B;
+}
+
+/* Projects (Sky Blue Theme) */
+.anvaya-node-projects .anvaya-node-card-body,
+.anvaya-node-project .anvaya-node-card-body {
+  border-left-color: #6CA6CD !important;
+  background-color: #F3F8FB !important;
+}
+.anvaya-node-icon-projects,
+.anvaya-node-icon-project {
+  background-color: #E2EFF7;
+  color: #6CA6CD;
+}
+.anvaya-category-pill-projects,
+.anvaya-category-pill-project {
+  background-color: #E2EFF7;
+  color: #6CA6CD;
+}
+
+/* Interests (Soft Rose Theme) */
+.anvaya-node-interests .anvaya-node-card-body,
+.anvaya-node-interest .anvaya-node-card-body {
+  border-left-color: #F0A5C2 !important;
+  background-color: #FFF6F9 !important;
+}
+.anvaya-node-icon-interests,
+.anvaya-node-icon-interest {
+  background-color: #FFE6F0;
+  color: #F0A5C2;
+}
+.anvaya-category-pill-interests,
+.anvaya-category-pill-interest {
+  background-color: #FFE6F0;
+  color: #F0A5C2;
+}
+
+/* Dreams & Motivations (Muted Lavender/Ochre Theme) */
+.anvaya-node-dreams .anvaya-node-card-body,
+.anvaya-node-dream .anvaya-node-card-body,
+.anvaya-node-motivations .anvaya-node-card-body,
+.anvaya-node-motivation .anvaya-node-card-body {
+  border-left-color: #D4A373 !important;
+  background-color: #FCF8F4 !important;
+}
+.anvaya-node-icon-dreams,
+.anvaya-node-icon-dream,
+.anvaya-node-icon-motivations,
+.anvaya-node-icon-motivation {
+  background-color: #F7EFE6;
+  color: #D4A373;
+}
+.anvaya-category-pill-dreams,
+.anvaya-category-pill-dream,
+.anvaya-category-pill-motivations,
+.anvaya-category-pill-motivation {
+  background-color: #F7EFE6;
+  color: #D4A373;
+}
+
+/* --- Legend Container Design --- */
+.anvaya-graph-legend {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 10;
+  background-color: var(--card-bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 10px 14px;
+  box-shadow: 0 4px 14px rgba(212, 163, 115, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 110px;
+  pointer-events: auto;
+}
+
+.anvaya-legend-title {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #292524;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 4px;
+  text-align: left;
+}
+
+.anvaya-legend-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.anvaya-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-sans);
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: #57534e;
+}
+
+.anvaya-legend-color-line {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  border-radius: 1.5px;
+  flex-shrink: 0;
+}
+
 
 /* Premium Navigation Controls Styling */
 .react-flow__controls {
@@ -145,4 +351,293 @@
   color: var(--muted-color);
   max-width: 300px;
   line-height: 1.5;
+}
+
+
+/* --- Reusable Chapter Details Premium Journal Layout Classes --- */
+
+.journal-card-details-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.details-header-divider {
+  border-bottom: 1px dashed var(--border-color);
+  padding-bottom: 1rem;
+}
+
+.details-header-title-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.details-header-emoji {
+  font-size: 1.4rem;
+}
+
+.details-header-title {
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.details-header-subtitle {
+  font-size: 0.725rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-color);
+}
+
+.details-paragraph {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--text-color);
+}
+
+.details-section-container {
+  border-top: 1px dashed var(--border-color);
+  padding-top: 1.2rem;
+}
+
+.details-section-title {
+  margin: 0 0 0.5rem 0;
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.details-section-subtitle {
+  margin: 0 0 0.8rem 0;
+  font-size: 0.8rem;
+  color: var(--muted-color);
+  line-height: 1.4;
+}
+
+.details-section-quote-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.details-meta-quote {
+  margin: 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--accent-color);
+  font-style: italic;
+  color: var(--muted-color);
+  font-size: 0.85rem;
+}
+
+.details-reflection-text {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--muted-color);
+  font-style: italic;
+}
+
+.details-connections-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.details-connection-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+}
+
+.details-timeline-container {
+  border-top: 1px dashed var(--border-color);
+  padding-top: 1.2rem;
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--muted-color);
+}
+
+.details-timeline-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.details-timeline-item.right-align {
+  align-items: flex-end;
+}
+
+.details-timeline-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  font-size: 0.65rem;
+}
+
+
+/* --- Discovery Card Refinements --- */
+.discovery-card-text {
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  line-height: 1.6 !important;
+  color: var(--text-color);
+  font-style: italic;
+  letter-spacing: 0.01em;
+}
+
+.discovery-card-text.poetic-placeholder {
+  color: var(--muted-color);
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+
+/* --- Questions Card Refinements --- */
+.questions-primary-text {
+  font-family: var(--font-serif);
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 1.55;
+  color: var(--text-color);
+  margin-bottom: 1.25rem;
+  padding-left: 14px;
+  border-left: 3px solid var(--accent-color);
+  font-style: italic;
+}
+
+.questions-secondary-section {
+  border-top: 1px dashed var(--border-color);
+  padding-top: 1rem;
+}
+
+.questions-secondary-title {
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted-color);
+  margin-bottom: 0.6rem;
+}
+
+.questions-secondary-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.questions-secondary-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.825rem;
+  line-height: 1.45;
+  color: var(--muted-color);
+}
+
+.questions-bullet {
+  color: var(--accent-color);
+  font-size: 0.75rem;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+/* ---------- Story of Understanding Timeline ---------- */
+
+.story-timeline-wrapper {
+  position: relative;
+  padding-left: 24px;
+  margin-top: 1rem;
+}
+
+.story-timeline-stem {
+  position: absolute;
+  top: 4px;
+  left: 10px;
+  bottom: 12px;
+  width: 1px;
+  background-color: var(--border-color);
+  border-left: 1px dashed var(--border-color);
+}
+
+.story-timeline-period-group {
+  margin-bottom: 1.5rem;
+}
+
+.story-timeline-period-title {
+  font-family: var(--font-serif);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-color);
+  margin: 0 0 0.8rem -12px;
+  background: var(--card-bg-color);
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+}
+
+.story-timeline-events-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.story-timeline-event-item {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.story-timeline-event-icon-circle {
+  position: absolute;
+  left: -23px;
+  top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background-color: var(--card-bg-color);
+  border: 1px solid var(--border-color);
+  font-size: 0.65rem;
+  z-index: 2;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.01);
+}
+
+.story-timeline-event-details {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+}
+
+.story-timeline-event-desc {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 0.825rem;
+  line-height: 1.45;
+  color: var(--text-color);
+}
+
+.story-timeline-event-date {
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--muted-color);
 }

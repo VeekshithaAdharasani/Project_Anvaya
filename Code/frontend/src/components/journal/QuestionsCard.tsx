@@ -46,7 +46,7 @@ export const QuestionsCard: React.FC<QuestionsCardProps> = ({ questions }) => {
         };
     }, [activeQuestions]);
 
-    // 3. Fallback placeholder if Curiosity Agent returns empty response
+    // 3. Poetic placeholder if Curiosity Agent returns empty response
     if (!primary) {
         return (
             <div className="journal-card" style={{ height: '100%', cursor: 'default' }}>
@@ -58,8 +58,8 @@ export const QuestionsCard: React.FC<QuestionsCardProps> = ({ questions }) => {
                     </span>
                     <h3 className="journal-card-title">Questions Worth Exploring</h3>
                 </div>
-                <p className="journal-card-content">
-                    "I'm still thinking about what would help me understand you better."
+                <p className="journal-card-content poetic-placeholder" style={{ fontStyle: 'italic', color: 'var(--muted-color)', opacity: 0.8 }}>
+                    "I am quietly listening. As we converse more, new paths of curiosity will open up."
                 </p>
             </div>
         );

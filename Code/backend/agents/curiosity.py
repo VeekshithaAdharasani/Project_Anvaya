@@ -150,8 +150,8 @@ class CuriosityAgent:
             if low_conf_nodes:
                 node = low_conf_nodes[0]
                 question_text = (
-                    f"I noticed I'm not very confident about \"{node.name}\" (confidence {node.confidence:.2f}). "
-                    "Could you tell me a bit more about this so I understand it better?"
+                    f"I'd like to understand your experience with {node.name} a little better. "
+                    f"Could you tell me more about how it fits into your journey?"
                 )
                 q = CuriosityQuestion(
                     target_node_id=node.id,
@@ -181,8 +181,8 @@ class CuriosityAgent:
                 )
                 if not has_supporting and not has_goal_or_skill:
                     question_text = (
-                        f"Your dream \"{dream.name}\" sounds meaningful — what skills or short-term goals "
-                        "are you focusing on to move toward that dream?"
+                        f"What first inspired your dream of becoming {dream.name}? "
+                        "I'd love to understand what started that journey."
                     )
                     q = CuriosityQuestion(
                         target_node_id=dream.id,
@@ -202,8 +202,7 @@ class CuriosityAgent:
                 inc_types = rel_types_of(incoming_rels(goal.id))
                 if not any(t in ("motivates", "supports", "influences") for t in inc_types):
                     question_text = (
-                        f"For the goal \"{goal.name}\", what is motivating you to pursue it? "
-                        "Understanding what drives it helps me support you better."
+                        f"What motivates you to keep pursuing {goal.name}, even when it becomes challenging?"
                     )
                     q = CuriosityQuestion(
                         target_node_id=goal.id,
@@ -221,8 +220,7 @@ class CuriosityAgent:
             for node in all_nodes:
                 if is_isolated(node.id):
                     question_text = (
-                        f"I see \"{node.name}\" listed but it doesn't seem connected to your other goals or skills. "
-                        "Could you tell me how this fits into what you're working on?"
+                        f"How does {node.name} connect with the other parts of your journey?"
                     )
                     q = CuriosityQuestion(
                         target_node_id=node.id,
@@ -249,8 +247,7 @@ class CuriosityAgent:
                         evidence_count = 0
                 if evidence_count <= 1:
                     question_text = (
-                        f"Could you share a bit more about \"{node.name}\"? "
-                        "A few examples or details would help me be more certain about it."
+                        f"What role does {node.name} play in your life or learning?"
                     )
                     q = CuriosityQuestion(
                         target_node_id=node.id,
@@ -282,7 +279,7 @@ class CuriosityAgent:
                         continue
                 if not required_skill_linked:
                     question_text = (
-                        f"For your goal \"{goal.name}\", are there specific skills you feel you need or are developing to achieve it?"
+                        f"Which skills do you think will be most important for achieving {goal.name}?"
                     )
                     q = CuriosityQuestion(
                         target_node_id=goal.id,

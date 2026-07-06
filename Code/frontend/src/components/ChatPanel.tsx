@@ -11,7 +11,11 @@ interface Message {
 
 interface ChatPanelProps {
     sessionId: string;
-    onMessageSent?: () => void | Promise<void>;
+    onMessageSent?: (payload: {
+        graph?: any;
+        discovery?: any;
+        story_event?: any;
+    }) => void | Promise<void>;
 }
 
 export default function ChatPanel({ sessionId, onMessageSent }: ChatPanelProps) {
@@ -43,6 +47,7 @@ export default function ChatPanel({ sessionId, onMessageSent }: ChatPanelProps) 
 
         try {
             const result = await sendChatMessage(sessionId, trimmedMessage);
+            console.log("CHAT RESPONSE:", result);
             
             const assistantMessage: Message = {
                 id: Math.random().toString(36).substring(7),
@@ -55,7 +60,11 @@ export default function ChatPanel({ sessionId, onMessageSent }: ChatPanelProps) 
             setStatus('Message sent.');
 
             if (onMessageSent) {
-                await onMessageSent();
+                await onMessageSent({
+                    graph: result.graph,
+                    discovery: result.discovery,
+                    story_event: result.story_event,
+                });
             }
         } catch (error) {
             setStatus(error instanceof Error ? error.message : 'Unable to send chat message.');

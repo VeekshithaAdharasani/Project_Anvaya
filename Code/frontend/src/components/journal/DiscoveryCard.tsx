@@ -1,8 +1,20 @@
+import React from 'react';
+
 interface DiscoveryCardProps {
     text: string;
 }
 
 export const DiscoveryCard: React.FC<DiscoveryCardProps> = ({ text }) => {
+  const isDefaultReflecting = 
+    !text || 
+    text.trim() === "" || 
+    text.toLowerCase().includes("reflecting on your journey") ||
+    text.toLowerCase().includes("reflecting on our journey");
+
+  const displayText = isDefaultReflecting
+    ? "I'm still reflecting on today's conversations. As we talk more, new patterns will gradually emerge."
+    : text;
+
   return (
     <div className="journal-card">
       <div className="journal-card-header">
@@ -15,9 +27,14 @@ export const DiscoveryCard: React.FC<DiscoveryCardProps> = ({ text }) => {
         </span>
         <h3 className="journal-card-title">Today's Discovery</h3>
       </div>
-      <p className="journal-card-content">
-        {text}
+      <p className={`journal-card-content discovery-card-text ${isPlaceholderText(displayText) ? 'poetic-placeholder' : ''}`}>
+        {displayText}
       </p>
     </div>
   );
+};
+
+// Helper to check if text matches the placeholder to apply soft styling
+const isPlaceholderText = (val: string): boolean => {
+  return val.includes("reflecting on today's conversations");
 };

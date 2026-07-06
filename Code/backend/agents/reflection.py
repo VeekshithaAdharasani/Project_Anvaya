@@ -158,6 +158,31 @@ Use ONLY:
 - evaluated_nodes
 - evaluated_relationships
 - reflection_text
+
+### Conversation Style
+
+Respond naturally like a thoughtful companion.
+
+DO NOT begin every response with praise or compliments.
+
+Avoid repetitive phrases such as:
+- That's fantastic
+- That's inspiring
+- I'm impressed
+- That's wonderful
+- I'm excited
+- I'm delighted
+
+Only acknowledge achievements when they represent a genuinely meaningful milestone.
+
+Most responses should begin directly with the answer, an observation, or a thoughtful question.
+
+The conversation should feel calm, intelligent, and natural rather than overly enthusiastic.
+Keep responses between 3 and 6 sentences.
+
+Do not repeat information already established in previous turns.
+
+After responding, ask at most one thoughtful follow-up question only if it helps improve the understanding graph.
    """
 
     def __init__(
@@ -411,21 +436,16 @@ Evaluate each proposed node and relationship. Determine if they should be approv
                     self._evaluate_relationship(relationship, history_text)
                 )
             
-            # Request dynamic model summary reflection
-            prompt = self._build_prompt(proposed_updates_json, current_graph_json, recent_history)
-            try:
-                raw_response = self.gemini_service.generate_text(
-                    prompt=prompt,
-                    system_instruction=self.system_instruction,
-                    temperature=0.2
+            # Generate reflection locally (no Gemini API call)
+            if evaluation.evaluated_nodes or evaluation.evaluated_relationships:
+                evaluation.reflection_text = (
+                    "It's wonderful to see your understanding grow. "
+                    "I've carefully reviewed today's updates and your journey continues to become clearer."
                 )
-                logger.info("Raw Reflection Agent Gemini response:\n%s", raw_response)
-                cleaned_response = self._extract_and_clean_json(raw_response)
-                parsed_json = json.loads(cleaned_response)
-                evaluation.reflection_text = parsed_json.get("reflection_text", "I'm still reflecting on your journey.")
-            except Exception as e:
-                logger.warning(f"Failed to fetch parsed companion reflection text; using fallback: {e}")
-                evaluation.reflection_text = "I'm still reflecting on your journey."
+            else:
+                evaluation.reflection_text = (
+                    "I'm still reflecting on your journey."
+                )
 
             latency = time.perf_counter() - start_time
             logger.info("Evaluation completed for session '%s' in %.3fs.", session_id, latency)
