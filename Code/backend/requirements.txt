@@ -3,7 +3,7 @@ uvicorn>=0.22.0
 networkx>=3.1
 pydantic>=2.0
 python-dotenv>=1.0.0
-
 google-genai>=1.0.0
 google-api-core>=2.19.0
 google-auth>=2.35.0
+httpx>=0.28.0
