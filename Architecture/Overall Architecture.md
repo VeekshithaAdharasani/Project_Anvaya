@@ -21,30 +21,24 @@ This shared understanding enables every agent to make consistent and personalize
 # High-Level Architecture
 
 ```
-                     User
-                       │
-               Conversation/Input
-                       │
-               Coordinator Agent
-                       │
-      ┌────────────────┼────────────────┐
-      │                │                │
- Memory Agent   Understanding Agent  Reflection Agent
-      │                │                │
-      └────────────────┼────────────────┘
-                       │
-               Understanding Layer
-                       │
-              Understanding Graph
-                       │
-      ┌─────────┬─────────┬─────────┐
-      │         │         │         │
- Planner   Learning   Opportunity  Shield
-   Agent      Agent      Agent      Agent
-      │         │         │         │
-      └─────────┴─────────┴─────────┘
-                       │
-              Personalized Response
+                User
+                  │
+          Conversation/Input
+                  │
+         Coordinator Agent
+                  │
+   ┌──────────┬──────────────┬──────────────┬──────────────┐
+   │          │              │              │
+Memory     Understanding   Reflection   Curiosity
+ Agent         Agent          Agent        Agent
+   │             │              │            │
+   └─────────────┴──────────────┴────────────┘
+                  │
+          Understanding Graph
+                  │
+     Discovery Service   Story Service
+                  │
+          Living Journal UI
 ```
 
 ---
